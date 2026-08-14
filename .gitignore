@@ -1,0 +1,22 @@
+# Build artifacts (shell)
+desktop/.sidecar-deps/
+desktop/.dsh-build/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/Cargo.lock
+ui/pages/
+ui/dist/
+node_modules/
+dist/
+coverage/
+*.log
+.env
+
+# Local design docs — kept out of the repository on purpose.
+Mydocs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

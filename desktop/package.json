@@ -1,0 +1,28 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness Desktop — Tauri 2 shell + Node sidecar for the dsh agent harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch:dsh": "node scripts/fetch-dsh.cjs",
+    "dev:sidecar": "node scripts/dev-sidecar.cjs",
+    "build:sidecar": "tsc -p sidecar/tsconfig.json && node scripts/copy-sidecar-static.cjs",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:win": "tauri build --bundles nsis",
+    "tauri:build:mac": "tauri build --bundles dmg",
+    "bundle-deps": "node scripts/bundle-deps.cjs"
+  },
+  "dependencies": {
+    "undici": "^6.21.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.22.0",
+    "typescript": "^5.7.0"
+  }
+}

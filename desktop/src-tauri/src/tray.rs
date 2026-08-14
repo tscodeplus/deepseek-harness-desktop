@@ -1,0 +1,326 @@
+//! System tray: status label, show/hide, restart service, open data/log dirs,
+//! auto-start & close-to-tray checkboxes, check updates, restart, quit.
+//!
+//! Menu rebuild triggers: config file change (config.rs poll), sidecar status
+//! change (sidecar.rs holder/health loops). Tauri has no "menu about to open"
+//! event, so state is only as fresh as the last rebuild — 1s config poll keeps
+//! it close enough for checkboxes and the status label.
+
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager};
+
+use crate::config::{config_path, DesktopConfig};
+use crate::i18n::{is_zh_cfg, tr};
+use crate::sidecar::{take_snapshot, SidecarState, StatusKind};
+
+const ID_TOGGLE: &str = "toggle-window";
+const ID_STATUS: &str = "status";
+const ID_RESTART_SERVICE: &str = "restart-service";
+const ID_OPEN_DATA: &str = "open-data-dir";
+const ID_OPEN_LOGS: &str = "open-log-dir";
+const ID_AUTO_START: &str = "auto-start";
+const ID_CLOSE_TO_TRAY: &str = "close-to-tray";
+const ID_CHECK_UPDATES: &str = "check-updates";
+const ID_RESTART_APP: &str = "restart-app";
+const ID_QUIT: &str = "quit";
+
+/// Create the tray icon with its initial menu.
+pub fn create_tray(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<()> {
+    let menu = build_menu(app, cfg)?;
+    // Without an explicit id the tray gets a random unique id and
+    // `app.tray_by_id("main")` in rebuild() silently misses → the menu
+    // would stay frozen at its initial state ("服务启动中…").
+    let mut builder = TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .tooltip("DeepSeek Harness")
+        .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main_window(tray.app_handle());
+            }
+        });
+
+    // Prefer a 16px tray icon; fall back to the app icon.
+    if let Some(icon) = load_tray_icon(app) {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    Ok(())
+}
+
+fn load_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
+    // 16×16 tray asset (same one the Electron build used) — the 512px app
+    // icon downscaled to tray size renders blurry on Windows.
+    tauri::image::Image::from_bytes(include_bytes!("../../assets/tray-icon.png")).ok()
+        .or_else(|| app.default_window_icon().cloned().map(|i| i.to_owned()))
+}
+
+fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri::Wry>> {
+    let zh = is_zh_cfg(cfg);
+    let menu = Menu::new(app)?;
+
+    let status = MenuItem::with_id(app, ID_STATUS, status_label(app, cfg), false, None::<&str>)?;
+    menu.append(&status)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+
+    let toggle = MenuItem::with_id(
+        app,
+        ID_TOGGLE,
+        tr("显示 / 隐藏窗口", "Show / Hide Window", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&toggle)?;
+
+    let restart = MenuItem::with_id(
+        app,
+        ID_RESTART_SERVICE,
+        tr("重启服务", "Restart Service", zh),
+        !cfg.is_remote(),
+        None::<&str>,
+    )?;
+    menu.append(&restart)?;
+
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+
+    let open_data = MenuItem::with_id(
+        app,
+        ID_OPEN_DATA,
+        tr("打开数据目录", "Open Data Folder", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&open_data)?;
+    let open_logs = MenuItem::with_id(
+        app,
+        ID_OPEN_LOGS,
+        tr("打开日志目录", "Open Log Folder", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&open_logs)?;
+
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+
+    let auto_start = CheckMenuItem::with_id(
+        app,
+        ID_AUTO_START,
+        tr("开机自启动", "Start on Login", zh),
+        true,
+        cfg.auto_start,
+        None::<&str>,
+    )?;
+    menu.append(&auto_start)?;
+    let close_to_tray = CheckMenuItem::with_id(
+        app,
+        ID_CLOSE_TO_TRAY,
+        tr("关闭时最小化到托盘", "Close to Tray", zh),
+        true,
+        cfg.close_to_tray,
+        None::<&str>,
+    )?;
+    menu.append(&close_to_tray)?;
+
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+
+    let check = MenuItem::with_id(
+        app,
+        ID_CHECK_UPDATES,
+        tr("检查更新", "Check for Updates", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&check)?;
+    let restart_app = MenuItem::with_id(
+        app,
+        ID_RESTART_APP,
+        tr("重启应用", "Restart App", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&restart_app)?;
+    let quit = MenuItem::with_id(app, ID_QUIT, tr("退出", "Quit", zh), true, None::<&str>)?;
+    menu.append(&quit)?;
+
+    Ok(menu)
+}
+
+fn status_label(app: &AppHandle, cfg: &DesktopConfig) -> String {
+    let zh = is_zh_cfg(cfg);
+    if cfg.is_remote() {
+        return format!(
+            "{}: {}",
+            tr("远程网关", "Remote gateway", zh),
+            cfg.gateway.remote_url
+        );
+    }
+    // The tray is created before sidecar::init manages the state — degrade
+    // gracefully instead of panicking on state().
+    let Some(state) = app.try_state::<std::sync::Arc<SidecarState>>() else {
+        return tr("服务启动中…", "Starting service…", zh).into();
+    };
+    let snapshot = take_snapshot(&state);
+    match snapshot.kind {
+        StatusKind::Running => format!(
+            "{} · {} {}",
+            tr("服务运行中", "Service running", zh),
+            tr("端口", "port", zh),
+            snapshot.port
+        ),
+        StatusKind::Starting => tr("服务启动中…", "Starting service…", zh).into(),
+        StatusKind::Stopping => tr("服务停止中…", "Stopping service…", zh).into(),
+        // Fixed label, like the Electron tray (its serviceStatusError string);
+        // the error details live in the error window, not in the menu.
+        StatusKind::Error => tr("服务异常", "Service error", zh).into(),
+        StatusKind::Stopped => tr("服务已停止", "Service stopped", zh).into(),
+    }
+}
+
+/// Rebuild the tray menu (new config or sidecar status).
+pub fn rebuild(app: &AppHandle, cfg: &DesktopConfig) {
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(menu) = build_menu(app, cfg) {
+            let _ = tray.set_menu(Some(menu));
+        } else {
+            log::warn!("tray: rebuild failed to build menu");
+        }
+    } else {
+        log::warn!("tray: rebuild found no tray with id \"main\"");
+    }
+}
+
+fn handle_menu_event(app: &AppHandle, id: &str) {
+    match id {
+        ID_TOGGLE => toggle_main_window(app),
+        ID_RESTART_SERVICE => crate::sidecar::restart(app),
+        ID_OPEN_DATA => {
+            // Real data (app.db, downloads, …) lives in `<userData>/data`;
+            // the userData root itself only holds config.yaml and logs/.
+            let cfg = crate::config::ShellConfig::load(app);
+            let data_dir = cfg.data_dir.join("data");
+            open_path(app, &data_dir);
+        }
+        ID_OPEN_LOGS => {
+            let log_dir = crate::config::ShellConfig::load(app).log_dir;
+            open_path(app, &log_dir);
+        }
+        ID_AUTO_START => toggle_auto_start(app),
+        ID_CLOSE_TO_TRAY => toggle_close_to_tray(app),
+        ID_CHECK_UPDATES => check_updates(app),
+        ID_RESTART_APP => restart_app(app),
+        ID_QUIT => quit_app(app),
+        _ => {}
+    }
+}
+
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(crate::windows::MAIN_LABEL) {
+        if let Ok(visible) = win.is_visible() {
+            if visible {
+                let _ = win.hide();
+            } else {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
+    }
+}
+
+fn open_path(app: &AppHandle, path: &std::path::Path) {
+    // Open the directory itself; only fall back to the parent when it does
+    // not exist (e.g. logs dir before the sidecar has written anything).
+    let target = if path.exists() {
+        path.to_path_buf()
+    } else if std::fs::create_dir_all(path).is_ok() {
+        path.to_path_buf()
+    } else {
+        path.parent().unwrap_or(path).to_path_buf()
+    };
+    let _ = tauri_plugin_opener::OpenerExt::opener(app)
+        .open_path(target.to_string_lossy().to_string(), None::<&str>);
+}
+
+fn toggle_auto_start(app: &AppHandle) {
+    use tauri_plugin_autostart::ManagerExt;
+    let path = config_path(app);
+    let mut cfg = DesktopConfig::load(&path);
+    let autolaunch = app.autolaunch();
+    match autolaunch.is_enabled() {
+        Ok(enabled) => {
+            cfg.auto_start = !enabled;
+            if cfg.auto_start {
+                let _ = autolaunch.enable();
+            } else {
+                let _ = autolaunch.disable();
+            }
+            let _ = cfg.save(&path);
+            rebuild(app, &cfg);
+        }
+        Err(_) => {
+            // Plugin unavailable (e.g. macOS without the right flags): flip the
+            // config anyway so the checkbox stays truthful.
+            cfg.auto_start = !cfg.auto_start;
+            let _ = cfg.save(&path);
+            rebuild(app, &cfg);
+        }
+    }
+}
+
+fn toggle_close_to_tray(app: &AppHandle) {
+    let path = config_path(app);
+    let mut cfg = DesktopConfig::load(&path);
+    cfg.close_to_tray = !cfg.close_to_tray;
+    crate::config::CLOSE_TO_TRAY.store(cfg.close_to_tray, std::sync::atomic::Ordering::SeqCst);
+    let _ = cfg.save(&path);
+    rebuild(app, &cfg);
+}
+
+/// Ask the sidecar for a tray-style update check (spinner window + dialogs).
+fn check_updates(app: &AppHandle) {
+    let state = app.state::<std::sync::Arc<SidecarState>>();
+    let snapshot = take_snapshot(&state);
+    if snapshot.kind == StatusKind::Stopped {
+        return;
+    }
+    let port = state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst);
+    let token = state.ctl_token.clone();
+    log::info!("tray: check_updates → POST sidecar :{port}/_desktop/updater/check");
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build();
+        if let Ok(client) = client {
+            let url = format!("http://127.0.0.1:{port}/_desktop/updater/check");
+            let resp = client
+                .post(&url)
+                .bearer_auth(&token)
+                .json(&serde_json::json!({ "includeBeta": false, "fromTray": true }))
+                .send()
+                .await;
+            log::info!("tray: updater/check response: {resp:?}");
+        }
+    });
+}
+
+fn restart_app(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = crate::sidecar::shutdown(&app).await;
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::process::Command::new(exe).spawn();
+        }
+        app.exit(0);
+    });
+}
+
+fn quit_app(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = crate::sidecar::shutdown(&app).await;
+        app.exit(0);
+    });
+}

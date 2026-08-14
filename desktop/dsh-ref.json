@@ -1,0 +1,6 @@
+{
+  "ref": "47f943859bef60e4160492346772ded9b24f765a",
+  "tag": null,
+  "mode": "commit",
+  "note": "上游暂无 git tag（npm 已发 0.1.0-rc.6）；骨架阶段跟随 master HEAD。发版 tag 出现后切回 release 模式。"
+}
