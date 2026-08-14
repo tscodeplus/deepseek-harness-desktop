@@ -16,7 +16,7 @@
 #   .\scripts\build.ps1 -CheckOnly       # Only verify prerequisites
 #
 # From WSL2:
-#   powershell.exe -File "E:\Code\DeepSeekHarnessDesktop\desktop\scripts\build.ps1"
+#   powershell.exe -File "E:\Code\deepseek-harness-desktop\desktop\scripts\build.ps1"
 # ============================================================================
 
 param(
@@ -222,7 +222,7 @@ function Invoke-KillStaleProcesses {
 # Default WSL source path (Linux side) and Windows target path.
 # Override via environment variables or edit the defaults below.
 $WslSourcePath = if ($env:DSHD_WSL_SRC) { $env:DSHD_WSL_SRC } else { "/home/iwapu/projects/deepseek-harness-desktop/" }
-$WinTargetPath  = if ($env:DSHD_WIN_TARGET) { $env:DSHD_WIN_TARGET } else { "E:\Code\DeepSeekHarnessDesktop" }
+$WinTargetPath  = if ($env:DSHD_WIN_TARGET) { $env:DSHD_WIN_TARGET } else { "E:\Code\deepseek-harness-desktop" }
 
 function Invoke-SyncCode {
     Write-Step "Syncing code from WSL"
@@ -236,7 +236,7 @@ function Invoke-SyncCode {
         return
     }
 
-    # Convert Windows path (E:\Code\DeepSeekHarnessDesktop) to WSL path
+    # Convert Windows path (E:\Code\deepseek-harness-desktop) to WSL path
     $winDrive = ($WinTargetPath -replace '^([A-Za-z]):.*', '$1').ToLower()
     $wslTarget = $WinTargetPath -replace '^[A-Za-z]:', "/mnt/$winDrive" -replace '\\', '/'
 
