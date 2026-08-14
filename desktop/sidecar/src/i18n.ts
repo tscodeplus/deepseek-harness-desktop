@@ -45,24 +45,6 @@ interface TrayLocale {
   serviceStatusRunning: string;
   serviceStatusError: string;
   serviceStatusStopped: string;
-  remoteGateway: string;
-}
-
-interface GatewayLocale {
-  title: string;
-  local: string;
-  localDesc: string;
-  remote: string;
-  remoteDesc: string;
-  urlPlaceholder: string;
-  tokenPlaceholder: string;
-  testBtn: string;
-  saveBtn: string;
-  testing: string;
-  exitBtn: string;
-  connected: string;
-  serverOnlineTokenInvalid: string;
-  gatewayUnreachable: string;
 }
 
 interface SplashLocale {
@@ -81,7 +63,6 @@ interface ErrorLocale {
 export interface DesktopLocales {
   updater: UpdaterLocale;
   tray: TrayLocale;
-  gateway: GatewayLocale;
   splash: SplashLocale;
   error: ErrorLocale;
 }
@@ -174,23 +155,6 @@ function fallbackLocales(): DesktopLocales {
       serviceStatusRunning: 'Service: Running',
       serviceStatusError: 'Service: Error',
       serviceStatusStopped: 'Service: Stopped',
-      remoteGateway: 'Remote Gateway',
-    },
-    gateway: {
-      title: 'Connect',
-      local: 'Local',
-      localDesc: 'Run the bundled server',
-      remote: 'Remote',
-      remoteDesc: 'Connect to a remote server',
-      urlPlaceholder: 'http://…',
-      tokenPlaceholder: 'Token',
-      testBtn: 'Test Connection',
-      saveBtn: 'Save',
-      testing: 'Testing…',
-      exitBtn: 'Exit',
-      connected: 'Connected',
-      serverOnlineTokenInvalid: 'Server is online but the token is invalid',
-      gatewayUnreachable: 'Gateway is unreachable',
     },
     splash: { starting: 'Starting…' },
     error: {

@@ -1,28 +1,20 @@
-// Sidecar control API — a small HTTP server on 127.0.0.1 that both the Rust
-// shell (health lifecycle) and the injected compat layer (config / updater /
-// bridge / language) talk to. Token-gated (Authorization: Bearer or ?token=
-// for EventSource) with CORS for the WebUI origin and the remote-gateway origin.
+// Sidecar control API — a small HTTP server on 127.0.0.1 that the Rust shell
+// (health lifecycle / tray) talks to. Token-gated (Authorization: Bearer or
+// ?token= for EventSource) with CORS for the WebUI origin.
 //
 // Endpoints:
-//   GET    /_desktop/ping                     → "pong" (compat-layer probe)
+//   GET    /_desktop/ping                     → "pong"
 //   GET    /_desktop/config?key=theme         → { key, value }
 //   PUT    /_desktop/config   {key, value}
-//   GET    /_desktop/gateway-config           → gateway object
-//   PUT    /_desktop/gateway-config           → partial merge
 //   PUT    /_desktop/language  {lang}
 //   GET    /_desktop/user-data-path           → { path }
 //   GET    /_desktop/events                   → SSE (updater events)
 //   POST   /_desktop/updater/check|download|cancel|install
-//   POST   /_desktop/bridge/session/:id       → register
-//   DELETE /_desktop/bridge/session/:id       → unregister
-//   GET    /_desktop/bridge/status
-//   GET    /_desktop/gateway-chooser          → HTML (first-run wizard)
+//   POST   /_desktop/dialog/close  {kind}     → close an updater dialog window
 //   GET    /_desktop/pages/updater/:kind      → HTML (dialog windows — cached
 //                                                by updater.ts via cachePage,
 //                                                loaded by Rust webview windows)
 //   POST   /_desktop/shutdown                 → graceful stop + exit
-//
-// M3 fills in updater routes; M2 fills in bridge + gateway-chooser.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { URL } from 'node:url';
@@ -30,14 +22,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import {
-  getGatewayConfig,
-  loadConfig,
-  resetGatewayConfig,
-  saveConfig,
-  setGatewayConfig,
-  type DesktopConfig,
-} from './config.js';
+import { loadConfig, saveConfig, type DesktopConfig } from './config.js';
 
 export interface ControlServerOptions {
   port: number;
@@ -103,6 +88,26 @@ function authorize(req: IncomingMessage, opts: ControlServerOptions): boolean {
   if (header === `Bearer ${opts.token}`) return true;
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   return url.searchParams.get('token') === opts.token;
+}
+
+/** Push to the Rust shell's control service (mirror of updater.ts shellFetch). */
+async function postToShell(pathname: string, body: unknown): Promise<void> {
+  const port = Number(process.env.DSHD_DESKTOP_CONTROL_PORT ?? 0);
+  const token = process.env.DSHD_CONTROL_TOKEN ?? '';
+  if (!port) return;
+  try {
+    await fetch(`http://127.0.0.1:${port}${pathname}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    /* best effort — the shell may be gone */
+  }
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -180,29 +185,6 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ControlSe
       return;
     }
 
-    if (path === '/_desktop/gateway-config' && method === 'GET') {
-      json(res, 200, getGatewayConfig());
-      return;
-    }
-
-    if (path === '/_desktop/webui-token' && method === 'GET') {
-      // WebUI gateway token for local mode — injected by the shell (prod) or
-      // dev-sidecar (dev) as DSHD_WEBUI_TOKEN. Served through the control API
-      // (already ctl-token-gated) so the WebUI never needs to know it a priori.
-      json(res, 200, { token: process.env.DSHD_WEBUI_TOKEN ?? 'dev' });
-      return;
-    }
-
-    if (path === '/_desktop/gateway-config' && method === 'PUT') {
-      const body = (await readJson(req)) as Partial<GatewayConfigBody>;
-      const updated = setGatewayConfig(body ?? {});
-      // Bridge follows the gateway config: connect for remote, drop for local.
-      const bridge = await import('./bridge.js');
-      bridge.syncBridgeFromConfig();
-      json(res, 200, updated);
-      return;
-    }
-
     if (path === '/_desktop/language' && method === 'PUT') {
       const body = (await readJson(req)) as { lang?: string };
       const lang = body?.lang;
@@ -240,21 +222,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ControlSe
       return;
     }
 
-    if (path.startsWith('/_desktop/bridge/')) {
-      await handleBridge(path, method, req, res);
-      return;
-    }
-
-    if (path === '/_desktop/gateway-chooser' && method === 'GET') {
-      // Optional query params carried by the Rust shell on the window URL:
-      // err = error banner text, url/rt = prefilled remote URL/token.
-      const err = url.searchParams.get('err') ?? undefined;
-      const initialUrl = url.searchParams.get('url') ?? undefined;
-      const initialToken = url.searchParams.get('rt') ?? undefined;
-      const html = await import('./gateway-chooser.js').then((m) =>
-        m.renderChooser(loadConfig(), { error: err, initialUrl, initialToken }),
-      );
-      text(res, 200, html, 'text/html; charset=utf-8');
+    if (path === '/_desktop/dialog/close' && method === 'POST') {
+      const body = (await readJson(req)) as { kind?: string };
+      const kind = typeof body?.kind === 'string' ? body.kind : '';
+      // Forward to the Rust shell's control service, which owns the window.
+      await postToShell('/close-window', { kind });
+      json(res, 200, { ok: true });
       return;
     }
 
@@ -300,12 +273,6 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ControlSe
   }
 }
 
-interface GatewayConfigBody {
-  mode?: 'local' | 'remote';
-  remoteUrl?: string;
-  remoteToken?: string;
-}
-
 // -- updater routes (M3): wired when updater.ts is ported --------------------
 
 async function handleUpdater(
@@ -324,7 +291,7 @@ async function handleUpdater(
           // Tray flow: spinner window + result dialogs.
           void updater.getAppUpdater().checkForUpdatesFromTray();
         } else {
-          // WebUI flow: SSE events back to the compat layer.
+        // WebUI flow: SSE events back to the UI.
           void updater.getAppUpdater().checkForUpdates(body?.includeBeta ?? false);
         }
         json(res, 200, { ok: true });
@@ -353,43 +320,6 @@ async function handleUpdater(
   }
 }
 
-// -- bridge routes (M2): desktop-bridge session registry ---------------------
-
-async function handleBridge(
-  path: string,
-  method: string,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  const sessionRe = /^\/_desktop\/bridge\/session\/([^/]+)$/;
-  const m = path.match(sessionRe);
-  try {
-    if (m) {
-      const sessionId = decodeURIComponent(m[1]);
-      if (method === 'POST') {
-        const bridge = await import('./bridge.js');
-        bridge.registerSession(sessionId);
-        json(res, 200, { ok: true });
-        return;
-      }
-      if (method === 'DELETE') {
-        const bridge = await import('./bridge.js');
-        bridge.unregisterSession(sessionId);
-        json(res, 200, { ok: true });
-        return;
-      }
-    }
-    if (path === '/_desktop/bridge/status' && method === 'GET') {
-      const bridge = await import('./bridge.js');
-      json(res, 200, bridge.getBridgeStatus());
-      return;
-    }
-    json(res, 404, { error: `not found: ${method} ${path}` });
-  } catch (e) {
-    json(res, 500, { error: e instanceof Error ? e.message : String(e) });
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Heartbeat — anti-orphan: the shell's control service must stay reachable or
 // the sidecar exits itself (Rust dying cannot leave the server running).
@@ -413,7 +343,7 @@ export function startHeartbeat(ctlPort: number, token: string, controlPort?: num
           'Content-Type': 'application/json',
         },
         // Report the actually-bound control API port so the shell can keep
-        // tray/compat requests pointed at the live one.
+        // tray requests pointed at the live one.
         body: JSON.stringify({ controlPort }),
         signal: AbortSignal.timeout(2000),
       });

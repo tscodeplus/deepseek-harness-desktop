@@ -1,6 +1,6 @@
 //! File-backed logger: mirrors every `log::` record to
 //! `<userData>/logs/shell.log` so shell-side state machine transitions
-//! (sidecar lifecycle, tray, control-server pushes, compat commands) are
+//! (sidecar lifecycle, tray, control-server pushes) are
 //! observable from disk. GUI apps have no stderr, so without this the Rust
 //! side was a black box for field debugging.
 //!

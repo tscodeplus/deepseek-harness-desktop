@@ -1,19 +1,17 @@
-// DeepSeek Harness Desktop — Tauri shell around the DeepSeek Harness Node gateway (sidecar).
+// DeepSeek Harness Desktop — Tauri shell around the DeepSeek Harness Node server (sidecar).
 //
 // Shell responsibilities (mirroring the former Electron main process):
 //   · spawn / supervise the Node sidecar (see sidecar.rs)
-//   · windows: splash, main WebUI window, gateway chooser, updater dialogs (windows.rs)
+//   · windows: splash, main WebUI window, updater dialogs (windows.rs)
 //   · system tray (tray.rs)
 //   · desktop-config.json mirror + theme/language/closeToTray reactions (config.rs)
 //   · tiny_http control service receiving pushes from the sidecar (ctl_server.rs)
-//   · compat_* commands exposed to the injected electronAPI compat layer (commands.rs)
 //
 // The dsh web UI is served by the sidecar (dsh-dist) and loaded via
-// http://127.0.0.1:3080 — same-origin, no compat layer needed.
+// http://127.0.0.1:3080 — same-origin.
 
 use tauri::Manager;
 
-mod commands;
 mod config;
 mod ctl_server;
 mod i18n;
@@ -38,27 +36,6 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .invoke_handler(tauri::generate_handler![
-            commands::compat_get_app_version,
-            commands::compat_get_platform,
-            commands::compat_quit_app,
-            commands::compat_restart_service,
-            commands::compat_get_server_status,
-            commands::compat_get_control_info,
-            commands::compat_save_file_from_url,
-            commands::compat_save_local_file,
-            commands::compat_window_minimize,
-            commands::compat_window_maximize,
-            commands::compat_window_is_maximized,
-            commands::compat_window_close,
-            commands::compat_open_data_dir,
-            commands::compat_open_config_file,
-            commands::compat_get_auto_start,
-            commands::compat_set_auto_start,
-            commands::compat_toggle_devtools,
-            commands::compat_open_gateway_chooser,
-            commands::compat_reload_main_window,
-        ])
         // Close-to-tray: intercept the main window's close request.
         .on_window_event(|window, event| {
             if window.label() == windows::MAIN_LABEL {

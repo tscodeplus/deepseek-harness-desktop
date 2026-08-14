@@ -69,8 +69,7 @@ pub struct SidecarState {
     pub ctl_token: String,
     /// Port the sidecar's control API listens on (reserved here, env
     /// DSHD_SIDECAR_CONTROL_PORT; corrected by the heartbeat when the
-    /// sidecar's actual bind shifted). Exposed to the compat layer via
-    /// `compat_get_control_info`.
+    /// sidecar's actual bind shifted). Consumed by the tray / shell windows.
     pub sidecar_api_port: std::sync::atomic::AtomicU16,
     /// Monotonic spawn counter — bumped on every respawn. Holders capture
     /// their own generation at spawn and ignore the exit of a previous
@@ -586,7 +585,7 @@ async fn health_loop(app: AppHandle, state: Arc<SidecarState>, server_port: u16)
                 }
             }
             StatusKind::Error => {
-                // Restart is initiated elsewhere (tray / compat command); the
+                // Restart is initiated elsewhere (tray); the
                 // loop picks up the new Starting state once respawn happens.
                 if healthy {
                     // Got healthy again (e.g. sidecar restarted externally).
@@ -599,85 +598,6 @@ async fn health_loop(app: AppHandle, state: Arc<SidecarState>, server_port: u16)
         }
         sleep(POLL_INTERVAL).await;
     }
-}
-
-/// Pre-flight outcome for a remote gateway (mirror of Electron's
-/// `checkRemoteHealth`): distinguishes "server offline" from "wrong token".
-#[derive(PartialEq, Eq, Debug)]
-pub(crate) enum RemoteHealth {
-    Ok,
-    Unreachable,
-    InvalidToken,
-}
-
-/// Probe a remote gateway: GET /api/health, then — when a token is configured
-/// — /api/auth/verify with it. The shell does this before revealing the main
-/// window in remote mode so a dead gateway surfaces the chooser immediately
-/// instead of an error page that cannot distinguish cause.
-pub(crate) async fn check_remote_health(url: &str, token: &str) -> RemoteHealth {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-    else {
-        return RemoteHealth::Unreachable;
-    };
-    let base = url.trim_end_matches('/');
-    let healthy = client
-        .get(format!("{base}/api/health"))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false);
-    if !healthy {
-        return RemoteHealth::Unreachable;
-    }
-    let token = token.trim();
-    if token.is_empty() {
-        return RemoteHealth::Ok;
-    }
-    let valid = client
-        .get(format!("{base}/api/auth/verify"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false);
-    if valid {
-        RemoteHealth::Ok
-    } else {
-        RemoteHealth::InvalidToken
-    }
-}
-
-/// Show the gateway chooser prefilled with the configured remote URL/token and
-/// an error banner describing why the remote gateway failed. Called from the
-/// health loop (non-main thread) → window creation needs the main thread.
-/// `error` must be 'static: it is moved into a main-thread closure.
-pub(crate) fn show_remote_chooser(app: &AppHandle, error: &'static str) {
-    let state = app.state::<Arc<SidecarState>>();
-    let port = state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst);
-    if port == 0 {
-        return; // control API not up yet — first-run flow will retry
-    }
-    let base_url = format!("http://127.0.0.1:{port}");
-    let ctl_token = state.ctl_token.clone();
-    let cfg = DesktopConfig::load(&config_path(app));
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let opts = crate::windows::ChooserOptions {
-            error: Some(error),
-            initial_url: Some(&cfg.gateway.remote_url),
-            initial_token: Some(&cfg.gateway.remote_token),
-        };
-        let _ = crate::windows::show_chooser_window(
-            &app2,
-            &base_url,
-            &ctl_token,
-            560,
-            620,
-            opts,
-        );
-    });
 }
 
 /// Graceful shutdown: ask the sidecar to stop() itself, wait briefly, then

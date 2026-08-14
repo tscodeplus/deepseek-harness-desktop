@@ -1,8 +1,7 @@
 //! Minimal runtime i18n for shell-rendered UI (splash, error dialogs, tray
 //! menu). The WebUI has its own i18n (ui/src/i18n); the shell mirrors the
 //! language from desktop-config.json — a "zh" prefix selects Chinese, anything
-//! else English, defaulting to Chinese (matching the gateway chooser's
-//! `?? 'zh-CN'` fallback, gateway-chooser.ts).
+//! else English, defaulting to Chinese.
 
 use crate::config::{config_path, DesktopConfig};
 use tauri::AppHandle;

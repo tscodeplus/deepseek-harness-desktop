@@ -1,6 +1,6 @@
 //! Window family: splash, main WebUI window (declared in tauri.conf.json),
-//! gateway chooser, updater dialogs, and the error window. Theme chrome
-//! reactions live here too.
+//! updater dialogs, and the error window. Theme chrome reactions live here
+//! too.
 
 use std::sync::Arc;
 
@@ -13,29 +13,14 @@ use crate::sidecar::SidecarState;
 
 pub const MAIN_LABEL: &str = "main";
 pub const SPLASH_LABEL: &str = "splash";
-pub const CHOOSER_LABEL: &str = "gateway-chooser";
 pub const ERROR_LABEL: &str = "error";
 pub const PROGRESS_LABEL: &str = "updater-progress";
-
-/// Percent-encode everything except a small safe set (encodeURIComponent-ish).
-fn url_escape(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for b in input.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~'
-            | b'*' | b'\'' | b'(' | b')' | b' ' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
 
 /// WebUI URL for the main window. dsh is local-only, so this is always the
 /// loopback web server. `cache_bust` appends a `_ts` query param so a
 /// navigate after config changes isn't served from the webview cache.
 pub fn webui_url(app: &AppHandle, cache_bust: bool) -> String {
-    // dsh is local-only: always the loopback web server. (The remote-gateway
-    // branch was OhMyAgent-specific and is intentionally gone.)
+    // dsh is local-only: always the loopback web server.
     let port = ShellConfig::load(app).server_port;
     let base = format!("http://127.0.0.1:{port}");
     if cache_bust {
@@ -49,20 +34,17 @@ pub fn webui_url(app: &AppHandle, cache_bust: bool) -> String {
     }
 }
 
-/// Main window — built in code (not tauri.conf.json) so the compat layer can
-/// be attached via initialization_script. Hidden until the dsh web server is
-/// ready; the window is *created lazily* once the sidecar health poll
-/// succeeds (reveal_main_window) so the WebView's first navigation never hits
-/// a not-yet-listening server (an early load would leave the webview stuck on
-/// the ERR_CONNECTION_REFUSED error page).
+/// Main window — built in code (not tauri.conf.json). Hidden until the dsh
+/// web server is ready; the window is *created lazily* once the sidecar
+/// health poll succeeds (reveal_main_window) so the WebView's first
+/// navigation never hits a not-yet-listening server (an early load would
+/// leave the webview stuck on the ERR_CONNECTION_REFUSED error page).
 ///
 /// Immersive shell (mirrors the old Electron frameless + titleBarOverlay
 /// look): no native toolbar. On Windows the window is fully frameless and the
 /// WebUI draws its own caption — a drag region plus minimize/maximize/close
-/// buttons at the top right (compat_window_* commands). macOS keeps the
-/// native traffic lights via TitleBarStyle::Overlay.
+/// buttons. macOS keeps the native traffic lights via TitleBarStyle::Overlay.
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
-    let compat_js = include_str!("../../sidecar/src/compat.js");
     let url = WebviewUrl::External(
         webui_url(app, false)
             .parse::<tauri::Url>()
@@ -74,8 +56,7 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         .min_inner_size(800.0, 600.0)
         .visible(false)
         .background_color(tauri::window::Color::from((10, 10, 10)))
-        .icon(window_icon())?
-        .initialization_script(compat_js);
+        .icon(window_icon())?;
     #[cfg(target_os = "macos")]
     {
         // hiddenInset-style: transparent title bar, content under it, native
@@ -158,24 +139,12 @@ pub fn create_splash(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The compat layer is injected on every window built in code (the gateway
-/// chooser's own HTML uses window.electronAPI).
-fn compat_script() -> &'static str {
-    include_str!("../../sidecar/src/compat.js")
-}
-
 /// Reveal the main window once the sidecar answers /api/health. The window is
 /// created lazily on first reveal (never at shell setup — see
 /// create_main_window) so the first navigation lands on a live server.
 ///
 /// Creating a window requires the main thread; the show/focus half is
 /// thread-safe and runs inline for the already-created case (restart flows).
-///
-/// An existing window may sit on a stale WebUI URL — e.g. the user switched
-/// local ↔ remote gateway and restarted the service, but the window kept
-/// loading the embedded server's WebUI. Re-navigate when the target URL
-/// differs so the page origin follows the active gateway (compare without
-/// the cache-busting `_ts`).
 pub fn reveal_main_window(app: &AppHandle) {
     if app.get_webview_window(MAIN_LABEL).is_none() {
         let app2 = app.clone();
@@ -238,86 +207,9 @@ pub fn close_splash(app: &AppHandle) {
     }
 }
 
-/// Reload the main window so the WebUI re-reads the gateway config — the
-/// chooser's "save" path (Electron relaunched the app there; the sidecar stays
-/// alive here, so a navigation is the equivalent). Creates + reveals the
-/// window when it does not exist yet (first run: chooser before reveal).
-///
-/// The chooser's save can land mid-service-restart, when the local server is
-/// briefly down — navigating then would stick the main window on a white
-/// connection-refused page. Wait for /api/health (bounded) before acting.
-pub fn reload_main_window(app: &AppHandle) {
-    let app2 = app.clone();
-    let server_port = ShellConfig::load(&app2).server_port;
-    tauri::async_runtime::spawn(async move {
-        let Ok(client) = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
-            .build()
-        else {
-            return;
-        };
-        // The embedded server answers this in both modes (it always runs);
-        // remote-mode reloads additionally depend on pre-flight already having
-        // passed (reveal_main_window) — navigate only to a known-healthy target.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        loop {
-            let ok = client
-                .get(format!("http://127.0.0.1:{server_port}/api/health"))
-                .send()
-                .await
-                .map(|r| r.status().is_success())
-                .unwrap_or(false);
-            if ok || std::time::Instant::now() > deadline {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        }
-        let app3 = app2.clone();
-        let url = webui_url(&app3, true);
-        // Remote mode: pre-flight the configured gateway before navigating, so
-        // a wrong URL/token saved in the chooser surfaces the chooser again
-        // (with its error banner) instead of a dead connection-refused page
-        // with no recovery path — mirror of Electron's relaunch-then-prefight.
-        let cfg = DesktopConfig::load(&config_path(&app3));
-        if cfg.is_remote() && !cfg.gateway.remote_url.is_empty() {
-            let remote_url = cfg.gateway.remote_url.clone();
-            let remote_token = cfg.gateway.remote_token.clone();
-            match crate::sidecar::check_remote_health(&remote_url, &remote_token).await {
-                crate::sidecar::RemoteHealth::Ok => {}
-                bad => {
-                    let key = match bad {
-                        crate::sidecar::RemoteHealth::Unreachable => "gatewayUnreachable",
-                        _ => "serverOnlineTokenInvalid",
-                    };
-                    log::warn!("windows: reload pre-flight {key} ({remote_url})");
-                    crate::sidecar::show_remote_chooser(&app3, key);
-                    return;
-                }
-            }
-        }
-        let _ = app2.run_on_main_thread(move || {
-            if let Some(win) = app3.get_webview_window(MAIN_LABEL) {
-                if let Err(e) = win.navigate(url.parse().expect("webui url")) {
-                    log::error!("windows: reload_main_window navigate failed: {e}");
-                }
-                let _ = win.show();
-                let _ = win.set_focus();
-            } else {
-                if let Err(e) = create_main_window(&app3) {
-                    log::error!("windows: create_main_window failed: {e}");
-                    return;
-                }
-                show_main_window(&app3);
-            }
-        });
-    });
-}
-
 /// Frameless error window with a message, a restart button and a dismiss
-/// button. The compat layer is injected so the buttons go through
-/// `compat_window_close` / `compat_restart_service`: on a data: URL page
-/// `window.close()` is a no-op (browsers only honor it for script-opened
-/// windows), which left an unclosable window behind.
+/// button. The runtime message and labels ride in via an initialization
+/// script as JSON.
 pub fn show_error_window(app: &AppHandle, message: &str) -> tauri::Result<()> {
     if let Some(win) = app.get_webview_window(ERROR_LABEL) {
         let _ = win.show();
@@ -338,7 +230,7 @@ pub fn show_error_window(app: &AppHandle, message: &str) -> tauri::Result<()> {
         "restart": restart_label,
         "ok": ok_label,
     });
-    let init = format!("{}\nwindow.__DSHD_ERR__ = {};", compat_script(), payload);
+    let init = format!("window.__DSHD_ERR__ = {};", payload);
     WebviewWindowBuilder::new(
         app,
         ERROR_LABEL,
@@ -354,121 +246,13 @@ pub fn show_error_window(app: &AppHandle, message: &str) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Extra state for the chooser page: an error banner (remote pre-flight
-/// failure) and prefilled URL/token. Carried as query params on the window
-/// URL; the sidecar's control API route reads them back.
-pub struct ChooserOptions<'a> {
-    pub error: Option<&'a str>,
-    pub initial_url: Option<&'a str>,
-    pub initial_token: Option<&'a str>,
-}
-
-/// Gateway chooser (first run / remote failure). The window loads the HTML
-/// straight from the sidecar control API (`/_desktop/gateway-chooser`) so the
-/// page origin is http://127.0.0.1:{control_port} — data: URLs have an opaque
-/// origin that the remote-domain ACL rejects, which would break the chooser's
-/// window.electronAPI invokes (save / close / quit).
-pub fn show_chooser_window(
-    app: &AppHandle,
-    base_url: &str,
-    token: &str,
-    width: u32,
-    height: u32,
-    opts: ChooserOptions<'_>,
-) -> tauri::Result<()> {
-    if let Some(win) = app.get_webview_window(CHOOSER_LABEL) {
-        log::info!("windows: show_chooser_window → existing window");
-        let _ = win.show();
-        let _ = win.set_focus();
-        return Ok(());
-    }
-    log::info!("windows: show_chooser_window creating (base {base_url})");
-    let mut url = format!("{base_url}/_desktop/gateway-chooser?token={token}");
-    if let Some(e) = opts.error {
-        url.push_str(&format!("&err={}", url_escape(e)));
-    }
-    if let Some(u) = opts.initial_url {
-        url.push_str(&format!("&url={}", url_escape(u)));
-    }
-    if let Some(t) = opts.initial_token {
-        url.push_str(&format!("&rt={}", url_escape(t)));
-    }
-    WebviewWindowBuilder::new(
-        app,
-        CHOOSER_LABEL,
-        WebviewUrl::External(url.parse().expect("chooser url")),
-    )
-    .title("DeepSeek Harness")
-    .inner_size(width as f64, height as f64)
-    .resizable(false)
-    .decorations(false)
-    .center()
-    .initialization_script(compat_script())
-    .build()?;
-    Ok(())
-}
-
-/// True when no gateway configuration exists yet — the first-run wizard must
-/// appear instead of the main window (mirror of the Electron main.ts check:
-/// `!firstRunDone && mode === 'local' && !remoteUrl` → showGatewayChooser).
-pub fn is_first_run(app: &AppHandle) -> bool {
-    use crate::config::{config_path, DesktopConfig};
-    let cfg = DesktopConfig::load(&config_path(app));
-    !cfg.first_run_done && !cfg.is_remote()
-}
-
-/// First-run flow: when no gateway is configured yet (firstRunDone == false,
-/// local mode, no remote URL), show the chooser window loading the sidecar
-/// control API page. Called once the gateway is healthy. The main window is
-/// NOT shown on first run — the chooser's save triggers reloadMainWindow,
-/// which creates it (Electron relaunched the whole app after saving; a
-/// create+show is the equivalent), so the user only ever sees one window.
-pub async fn maybe_show_chooser(app: AppHandle) {
-    if !is_first_run(&app) {
-        return;
-    }
-    if app.get_webview_window(CHOOSER_LABEL).is_some() {
-        return; // already showing
-    }
-
-    let state = app.state::<Arc<SidecarState>>();
-    let port = state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst);
-    if port == 0 {
-        return; // control API not up yet
-    }
-    let base_url = format!("http://127.0.0.1:{port}");
-    let token = state.ctl_token.clone();
-
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Err(e) = show_chooser_window(
-            &app2,
-            &base_url,
-            &token,
-            560,
-            620,
-            ChooserOptions {
-                error: None,
-                initial_url: None,
-                initial_token: None,
-            },
-        ) {
-            log::error!("windows: maybe_show_chooser failed: {e}");
-            return;
-        }
-        // With the main window deferred, the splash has no other consumer in
-        // the first-run path — dismiss it once the wizard is on screen.
-        close_splash(&app2);
-    });
-}
-
 /// Updater dialogs pushed by the sidecar via POST /show-window.
 /// `kind` selects the window label; an existing window is only shown again
 /// (content updates come from the HTML's own polling of the control API).
 ///
 /// The window loads http://127.0.0.1:{control_port}/_desktop/pages/updater/{kind}
 /// (HTML cached by the sidecar's control server) instead of an embedded
-/// data: URL — see show_chooser_window for why data: URLs can't invoke.
+/// data: URL.
 pub fn show_dialog_window(
     app: &AppHandle,
     kind: &str,
@@ -514,10 +298,23 @@ pub fn show_dialog_window(
     .decorations(false)
     .background_color(tauri::window::Color::from((20, 20, 31)))
     .center()
-    .initialization_script(compat_script())
     .build()?;
     let _ = dark;
     Ok(())
+}
+
+/// Close an updater dialog window by kind (label resolution mirrors
+/// show_dialog_window). Called from the sidecar via the shell control
+/// service (`POST /close-window`) when a dialog button asks to close.
+pub fn close_dialog_window(app: &AppHandle, kind: &str) {
+    let label = match kind {
+        "progress" => PROGRESS_LABEL,
+        "spinner" => "updater-spinner",
+        _ => "updater-dialog",
+    };
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.close();
+    }
 }
 
 /// Apply the configured theme to the main window chrome: window background

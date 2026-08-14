@@ -7,15 +7,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-export interface GatewayDesktopConfig {
-  /** 'local' = embedded server, 'remote' = connect to external instance */
-  mode: 'local' | 'remote';
-  /** Remote gateway URL (e.g. http://192.168.1.100:3080) */
-  remoteUrl: string;
-  /** Auth token for the remote gateway */
-  remoteToken: string;
-}
-
 export interface DesktopConfig {
   closeToTray: boolean;
   autoStart: boolean;
@@ -23,7 +14,6 @@ export interface DesktopConfig {
   /** UI language ('en' or 'zh-CN'), persisted across restarts. */
   language?: 'en' | 'zh-CN';
   firstRunDone: boolean;
-  gateway: GatewayDesktopConfig;
 }
 
 // electron-store schema defaults (orphan keys like window/minimizeToTray/
@@ -33,7 +23,6 @@ const DEFAULTS: DesktopConfig = {
   autoStart: false,
   theme: 'system',
   firstRunDone: false,
-  gateway: { mode: 'local', remoteUrl: '', remoteToken: '' },
 };
 
 function configPath(): string {
@@ -47,7 +36,6 @@ export function loadConfig(): DesktopConfig {
     return {
       ...DEFAULTS,
       ...raw,
-      gateway: { ...DEFAULTS.gateway, ...(raw.gateway ?? {}) },
     };
   } catch {
     // Missing or corrupt — start from defaults.
@@ -61,22 +49,4 @@ export function saveConfig(cfg: DesktopConfig): void {
   const tmp = `${p}.tmp`;
   writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8');
   renameSync(tmp, p); // atomic — the shell's mtime poll never sees a partial file
-}
-
-export function getGatewayConfig(): GatewayDesktopConfig {
-  return loadConfig().gateway;
-}
-
-export function setGatewayConfig(config: Partial<GatewayDesktopConfig>): GatewayDesktopConfig {
-  const cfg = loadConfig();
-  cfg.gateway = { ...cfg.gateway, ...config };
-  saveConfig(cfg);
-  return cfg.gateway;
-}
-
-export function resetGatewayConfig(): GatewayDesktopConfig {
-  const cfg = loadConfig();
-  cfg.gateway = structuredClone(DEFAULTS.gateway);
-  saveConfig(cfg);
-  return cfg.gateway;
 }

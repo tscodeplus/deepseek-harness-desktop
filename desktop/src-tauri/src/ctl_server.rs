@@ -4,6 +4,7 @@
 //!   POST /ping            — sidecar heartbeat (anti-orphan liveness)
 //!   POST /update-install  — {path}: spawn installer detached, then exit
 //!   POST /show-window     — {kind, html, width, height}: show a dialog window
+//!   POST /close-window    — {kind}: close a dialog window
 //!   POST /restart-app     — relaunch the shell
 //!
 //! tiny_http is used rather than axum: four fixed endpoints, blocking IO on a
@@ -37,6 +38,11 @@ struct ShowWindowBody {
     height: u32,
     #[serde(default = "default_true")]
     dark: bool,
+}
+
+#[derive(Deserialize)]
+struct CloseWindowBody {
+    kind: String,
 }
 
 fn default_true() -> bool {
@@ -176,6 +182,22 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
                         }
                     });
                     ok("window shown")
+                }
+                Err(e) => {
+                    tiny_http::Response::from_string(format!("bad body: {e}"))
+                        .with_status_code(400)
+                }
+            }
+        }
+        "/close-window" => {
+            match serde_json::from_str::<CloseWindowBody>(body) {
+                Ok(b) => {
+                    log::info!("ctl_server: /close-window kind={}", b.kind);
+                    let app2 = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        crate::windows::close_dialog_window(&app2, &b.kind);
+                    });
+                    ok("window closed")
                 }
                 Err(e) => {
                     tiny_http::Response::from_string(format!("bad body: {e}"))

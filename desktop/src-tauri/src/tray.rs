@@ -82,7 +82,7 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
         app,
         ID_RESTART_SERVICE,
         tr("重启服务", "Restart Service", zh),
-        !cfg.is_remote(),
+        true,
         None::<&str>,
     )?;
     menu.append(&restart)?;
@@ -153,13 +153,6 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
 
 fn status_label(app: &AppHandle, cfg: &DesktopConfig) -> String {
     let zh = is_zh_cfg(cfg);
-    if cfg.is_remote() {
-        return format!(
-            "{}: {}",
-            tr("远程网关", "Remote gateway", zh),
-            cfg.gateway.remote_url
-        );
-    }
     // The tray is created before sidecar::init manages the state — degrade
     // gracefully instead of panicking on state().
     let Some(state) = app.try_state::<std::sync::Arc<SidecarState>>() else {

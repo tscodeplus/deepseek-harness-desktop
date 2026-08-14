@@ -5,11 +5,10 @@
 //   1. net.fetch            → global fetch (Node 22 stream API identical)
 //   2. app.getVersion()     → process.env.DSHD_APP_VERSION
 //   3. app.getPath(userData)→ process.env.DSHD_HOME
-//   4. webContents.send()   → broadcastEvent() (SSE to compat layer + dialogs)
+//   4. webContents.send()   → broadcastEvent() (SSE to dialogs)
 //   5. spawn(installer --updated) → POST shell /update-install (Rust spawns
 //      the installer DETACHED and exits)
-//   6. BrowserWindow dialogs → POST shell /show-window; the dialog HTML talks
-//      to the compat layer (window.electronAPI) instead of ipcRenderer
+//   6. BrowserWindow dialogs → POST shell /show-window
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -190,8 +189,58 @@ function showWindow(kind: string, html: string, width: number, height: number, d
   // The Rust shell builds the dialog window against a real http:// page
   // (data: URLs are rejected by the remote-origin ACL), so the HTML is cached
   // here and served from the control API; /show-window only carries geometry.
-  cachePage(kind, html);
+  cachePage(kind, withDialogShim(kind, html));
   void shellFetch('/show-window', { kind, width, height, dark });
+}
+
+/**
+ * Dialog window shim — the updater dialog pages are plain web content served
+ * from the sidecar control API (same origin), so their buttons talk to the
+ * control API directly (token from the window URL). Window close goes
+ * sidecar → shell control service (`POST /close-window`), which closes the
+ * Rust window.
+ */
+function withDialogShim(kind: string, html: string): string {
+  const shim = `<script>
+window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
+(function () {
+  var q = new URLSearchParams(location.search);
+  var token = q.get('token') || '';
+  var base = location.origin;
+  function ctl(path, body) {
+    var sep = path.indexOf('?') >= 0 ? '&' : '?';
+    return fetch(base + path + sep + 'token=' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : '{}'
+    }).catch(function () {});
+  }
+  var listeners = {
+    'update-download-progress': [],
+    'update-downloaded': [],
+    'update-error': []
+  };
+  function on(type, e) {
+    var data;
+    try { data = JSON.parse(e.data); } catch (_) { return; }
+    listeners[type].forEach(function (f) { f(data); });
+  }
+  var es = new EventSource(base + '/_desktop/events?token=' + encodeURIComponent(token));
+  es.addEventListener('update-download-progress', function (e) { on('update-download-progress', e); });
+  es.addEventListener('update-downloaded', function (e) { on('update-downloaded', e); });
+  es.addEventListener('update-error', function (e) { on('update-error', e); });
+  window.__dshDialog = {
+    close: function () { ctl('/_desktop/dialog/close', { kind: window.__DSHD_DIALOG_KIND || '' }); },
+    downloadUpdate: function () { ctl('/_desktop/updater/download'); },
+    cancelDownload: function () { ctl('/_desktop/updater/cancel'); },
+    installUpdate: function () { ctl('/_desktop/updater/install'); },
+    onUpdateDownloadProgress: function (f) { listeners['update-download-progress'].push(f); },
+    onUpdateDownloaded: function (f) { listeners['update-downloaded'].push(f); },
+    onUpdateError: function (f) { listeners['update-error'].push(f); }
+  };
+})();
+</script>`;
+  return html.replace('</head>', `${shim}</head>`);
 }
 
 /** Write an updater diagnostic message to the shared diag log (same path as Electron). */
@@ -268,8 +317,7 @@ export class AppUpdater {
         });
       } else {
         // Non-timeout failures must also reach the WebUI — without the
-        // event the about page stays on "checking" forever (the UI has no
-        // polling fallback and compat.js ctlFetch resolved fine).
+        // event the about page stays on "checking" forever.
         const rawMsg = e.message || String(err);
         diagLog(`checkForUpdates: error caught — ${rawMsg}`);
         console.error('[AppUpdater] Check for updates failed');
@@ -659,7 +707,7 @@ export class AppUpdater {
   /**
    * Check for updates from the tray — spinner window during the check, then a
    * dialog with the result. All windows are rendered by the Rust shell via
-   * POST /show-window; their buttons talk to the compat layer.
+   * POST /show-window.
    */
   async checkForUpdatesFromTray(): Promise<void> {
     // The tray dialog closes right after downloadUpdate() is clicked, so the
@@ -757,7 +805,7 @@ export class AppUpdater {
   </div>
   <div class="message">${getT().updater.upToDate}</div>
   <div class="footer">
-    <button class="btn-primary" onclick="window.electronAPI.close()">${getT().updater.ok}</button>
+    <button class="btn-primary" onclick="window.__dshDialog.close()">${getT().updater.ok}</button>
   </div>
 </body></html>`;
 
@@ -788,7 +836,7 @@ export class AppUpdater {
 <body>
   <h3>${title}</h3>
   <p>${detail.replace(/</g, '&lt;')}</p>
-  <button onclick="window.electronAPI.close()">${getT().updater.ok}</button>
+  <button onclick="window.__dshDialog.close()">${getT().updater.ok}</button>
 </body></html>`;
 
     showWindow('updater-dialog', html, 380, 240, isDark);
@@ -857,15 +905,15 @@ export class AppUpdater {
   </div>
   <div class="content">${notesBody}</div>
   <div class="footer">
-    <button class="btn-secondary" onclick="window.electronAPI.close()">${getT().updater.cancel}</button>
-    <button class="btn-primary" onclick="window.electronAPI.downloadUpdate();window.electronAPI.close()">${getT().updater.upgrade}</button>
+    <button class="btn-secondary" onclick="window.__dshDialog.close()">${getT().updater.cancel}</button>
+    <button class="btn-primary" onclick="window.__dshDialog.downloadUpdate();window.__dshDialog.close()">${getT().updater.upgrade}</button>
   </div>
 </body></html>`;
 
     showWindow('updater-dialog', html, 500, 460, isDark);
   }
 
-  /** Download progress window — listens to compat-layer events (SSE). */
+  /** Download progress window — listens to updater events (SSE). */
   private showDownloadProgressWindow(): void {
     const isDark = this.isDarkTheme();
     const bg = isDark ? '#1e1e2e' : '#ffffff';
@@ -919,11 +967,11 @@ export class AppUpdater {
     <button class="btn-primary" id="btn-install" style="display:none">${getT().updater.installAndRestart}</button>
   </div>
 <script>
-  var api = window.electronAPI;
+  var api = window.__dshDialog;
   function fmtSize(b){if(!b||b<=0)return'';var u=['B','KB','MB','GB'];var i=0,v=b;while(v>=1024&&i<u.length-1){v/=1024;i++}return v.toFixed(v<10?1:0)+' '+u[i]}
   function fmtSpeed(bps){var s=fmtSize(bps);return s?s+'/s':''}
   var _lastPct=0;
-  document.getElementById('btn-close').addEventListener('click',function(){api.cancelDownload();window.electronAPI.close()});
+  document.getElementById('btn-close').addEventListener('click',function(){api.cancelDownload();window.__dshDialog.close()});
   document.getElementById('btn-install').addEventListener('click',function(){api.installUpdate()});
   document.getElementById('btn-releases').addEventListener('click',function(){window.open('https://github.com/tscodeplus/DeepSeek Harness/releases')});
   api.onUpdateDownloadProgress(function(d){

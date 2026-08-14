@@ -8,7 +8,11 @@
  *
  *   · clone/fetch the upstream repo into .dsh-build/dist (checked out, built
  *     in place — this directory IS the dsh closure that bundle-deps and the
- *     Tauri resources consume)
+ *     Tauri resources consume). The .git metadata is removed after a
+ *     successful build: tauri-build walks the resources tree at compile time
+ *     and chokes on git's read-only pack files (EACCES on rebuild), and
+ *     bundling .git would bloat the installer. The next fetch re-inits and
+ *     shallow-fetches the pinned ref (a few MB for a tag/tip).
  *   · `pnpm install --frozen-lockfile` + `pnpm run build` (upstream lockfile
  *     makes the dependency closure reproducible)
  *   · verify the CLI entry the sidecar will spawn; write a provenance manifest
@@ -126,6 +130,13 @@ function main() {
   };
   fs.writeFileSync(MANIFEST_FILE, JSON.stringify(manifest, null, 2) + '\n');
   console.log(`[fetch-dsh] done — provenance manifest at ${MANIFEST_FILE}`);
+
+  // Keep the closure free of git metadata (see header comment).
+  const gitDir = path.join(DSH_DIR, '.git');
+  if (fs.existsSync(gitDir)) {
+    fs.rmSync(gitDir, { recursive: true, force: true });
+    console.log('[fetch-dsh] removed .git from build closure');
+  }
 }
 
 main();

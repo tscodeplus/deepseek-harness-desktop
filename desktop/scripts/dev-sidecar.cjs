@@ -6,7 +6,7 @@
 // `pnpm dsh web` in the dsh source checkout (DSHD_DEV_ROOT, defaulting to
 // desktop/.dsh-build/dist if it exists).
 //
-// Dev ports/config (fixed, mirrored by compat.js fallback):
+// Dev ports/config (fixed):
 //   DSHD_SIDECAR_CONTROL_PORT=9291, DSHD_CONTROL_TOKEN=dev
 
 const { spawn } = require('child_process');

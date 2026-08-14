@@ -1,24 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for all shell windows. Remote API access covers the local gateway origin so the injected compat layer (invoke) works on the WebUI page; the remote-gateway origin is added at runtime (config.rs) when the user configures remote mode.",
+  "description": "Default permissions for all shell windows. Covers the local dsh WebUI origin (http://127.0.0.1:3080) plus the shell's own windows.",
   "windows": [
     "main",
     "splash",
-    "gateway-chooser",
     "updater-progress",
     "updater-spinner",
     "updater-dialog",
     "error"
   ],
-  "remote": {
-    "urls": [
-      "http://127.0.0.1:3080",
-      "http://localhost:3080",
-      "http://127.0.0.1:*",
-      "http://localhost:*"
-    ]
-  },
   "permissions": [
     "core:default",
     "dialog:default",
@@ -26,25 +17,6 @@
     "notification:default",
     "autostart:allow-enable",
     "autostart:allow-disable",
-    "autostart:allow-is-enabled",
-    "allow-compat-get-app-version",
-    "allow-compat-get-platform",
-    "allow-compat-get-server-status",
-    "allow-compat-get-control-info",
-    "allow-compat-quit-app",
-    "allow-compat-restart-service",
-    "allow-compat-window-minimize",
-    "allow-compat-window-maximize",
-    "allow-compat-window-is-maximized",
-    "allow-compat-window-close",
-    "allow-compat-toggle-devtools",
-    "allow-compat-open-data-dir",
-    "allow-compat-open-config-file",
-    "allow-compat-get-auto-start",
-    "allow-compat-set-auto-start",
-    "allow-compat-save-file-from-url",
-    "allow-compat-save-local-file",
-    "allow-compat-open-gateway-chooser",
-    "allow-compat-reload-main-window"
+    "autostart:allow-is-enabled"
   ]
 }
