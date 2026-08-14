@@ -24,7 +24,7 @@ function dataDir() {
       ? process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
       : process.platform === 'darwin'
         ? path.join(os.homedir(), 'Library', 'Application Support')
-        : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'DeepSeek Harness');
 }
 

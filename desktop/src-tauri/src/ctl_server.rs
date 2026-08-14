@@ -1,22 +1,55 @@
 //! Tiny control service (127.0.0.1, random port) — the sidecar's push channel
-//! into the shell. Endpoints (all require `Authorization: Bearer <token>`):
+//! into the shell, plus the shell's own static pages (splash / error).
+//! Endpoints (all require `Authorization: Bearer <token>` unless noted):
 //!
 //!   POST /ping            — sidecar heartbeat (anti-orphan liveness)
 //!   POST /update-install  — {path}: spawn installer detached, then exit
 //!   POST /show-window     — {kind, html, width, height}: show a dialog window
 //!   POST /close-window    — {kind}: close a dialog window
+//!   POST /restart-service — ask the shell to restart the sidecar
+//!   POST /quit-app        — exit the shell
 //!   POST /restart-app     — relaunch the shell
+//!   GET  /pages/:page     — embedded shell pages (splash.html, error.html;
+//!                           no auth — they are loaded by the shell's own
+//!                           webview windows)
 //!
 //! tiny_http is used rather than axum: four fixed endpoints, blocking IO on a
 //! plain thread, no extra dependency weight for a first Tauri build.
 
 use serde::Deserialize;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Manager};
 
 use std::sync::Arc;
 
 use crate::sidecar::{SidecarState, StatusKind};
+
+/// Bound port of the shell control service (0 until started). Also consumed
+/// by the window code to build splash/error page URLs.
+pub static CTL_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// Control token, generated once per shell run and shared with the sidecar.
+static CTL_TOKEN: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Generate the control token, start the control server and record the port.
+/// Called synchronously from setup (before any shell window is created) so
+/// the splash can load from this server; `sidecar::init` reuses the result.
+pub fn init(app: AppHandle) -> (String, u16) {
+    let token = uuid::Uuid::new_v4().to_string();
+    let port = start(app, token.clone());
+    *CTL_TOKEN.lock().unwrap() = Some(token.clone());
+    (token, port)
+}
+
+pub fn port() -> u16 {
+    CTL_PORT.load(Ordering::SeqCst)
+}
+
+pub fn token() -> Option<String> {
+    CTL_TOKEN.lock().unwrap().clone()
+}
 
 #[derive(Deserialize)]
 struct UpdateInstallBody {
@@ -66,9 +99,17 @@ pub fn start(app: AppHandle, token: String) -> u16 {
             return 0;
         }
     };
+    CTL_PORT.store(port, Ordering::SeqCst);
 
     std::thread::spawn(move || {
         for mut request in server.incoming_requests() {
+            let url = request.url().to_string();
+            let method = request.method().clone();
+            // Shell pages (splash / error) are loaded by our own webview
+            // windows, which cannot send an Authorization header on
+            // navigation — exempt GET /pages/* from the token check.
+            let is_page = method == tiny_http::Method::Get
+                && url.split('?').next().unwrap_or("").starts_with("/pages/");
             let authorized = request
                 .headers()
                 .iter()
@@ -77,16 +118,13 @@ pub fn start(app: AppHandle, token: String) -> u16 {
                 .map(|v| v == format!("Bearer {token}"))
                 .unwrap_or(false);
 
-            if !authorized {
+            if !is_page && !authorized {
                 let _ = request.respond(
                     tiny_http::Response::from_string("unauthorized")
                         .with_status_code(401),
                 );
                 continue;
             }
-
-            let url = request.url().to_string();
-            let method = request.method().clone();
 
             let mut body = String::new();
             if method == tiny_http::Method::Post {
@@ -124,10 +162,24 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
         tiny_http::Response::from_string(text.to_string())
             .with_status_code(200)
     };
+    let html = |text: &str| {
+        tiny_http::Response::from_string(text.to_string())
+            .with_status_code(200)
+            .with_header(
+                "Content-Type: text/html; charset=utf-8"
+                    .parse::<tiny_http::Header>()
+                    .expect("static header"),
+            )
+    };
 
     let (path, _query) = url.split_once('?').unwrap_or((url, ""));
 
     match path {
+        // Embedded shell pages (see module docs). include_str! keeps them in
+        // the binary, so splash/error work even when the sidecar or dsh is
+        // down — which is exactly when the error window appears.
+        "/pages/splash.html" => html(include_str!("../pages/splash.html")),
+        "/pages/error.html" => html(include_str!("../pages/error.html")),
         "/ping" => {
             // Keep the shell's view of the control API port in sync: the
             // sidecar may have re-bound elsewhere (reserved-port race).
@@ -204,6 +256,24 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
                         .with_status_code(400)
                 }
             }
+        }
+        "/restart-service" => {
+            // Error-window "Restart Service" button: same entry point as the
+            // tray menu (sidecar::restart).
+            let state = app.state::<Arc<SidecarState>>();
+            let snapshot = crate::sidecar::take_snapshot(&state);
+            if snapshot.kind != StatusKind::Stopped {
+                crate::sidecar::restart(&app.clone());
+            }
+            ok("restarting")
+        }
+        "/quit-app" => {
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::sidecar::shutdown(&app2).await;
+                app2.exit(0);
+            });
+            ok("quitting")
         }
         "/restart-app" => {
             let exe = std::env::current_exe();

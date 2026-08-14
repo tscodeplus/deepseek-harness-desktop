@@ -173,8 +173,16 @@ pub async fn init(app: &AppHandle) {
     let cfg = ShellConfig::load(app);
     let server_port = cfg.server_port;
 
-    let ctl_token = uuid::Uuid::new_v4().to_string();
-    let ctl_port = crate::ctl_server::start(app.clone(), ctl_token.clone());
+    // The control server is started synchronously in setup (before the
+    // splash is created, which loads its page from it). Reuse that instance.
+    let (ctl_token, ctl_port) = if crate::ctl_server::port() != 0 {
+        (
+            crate::ctl_server::token().unwrap_or_default(),
+            crate::ctl_server::port(),
+        )
+    } else {
+        crate::ctl_server::init(app.clone())
+    };
     let sidecar_api_port = reserve_port();
     let state = Arc::new(SidecarState {
         status: RwLock::new(SidecarStatus {

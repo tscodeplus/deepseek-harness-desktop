@@ -16,6 +16,17 @@ pub const SPLASH_LABEL: &str = "splash";
 pub const ERROR_LABEL: &str = "error";
 pub const PROGRESS_LABEL: &str = "updater-progress";
 
+/// Shell-owned pages (splash / error) are served by the shell's own control
+/// service (ctl_server.rs) — they must render even when the sidecar or the
+/// dsh web server is down, which is exactly when the error window appears.
+fn shell_page_url(page: &str) -> WebviewUrl {
+    WebviewUrl::External(
+        format!("http://127.0.0.1:{}/pages/{page}", crate::ctl_server::port())
+            .parse::<tauri::Url>()
+            .expect("ctl page url"),
+    )
+}
+
 /// WebUI URL for the main window. dsh is local-only, so this is always the
 /// loopback web server. `cache_bust` appends a `_ts` query param so a
 /// navigate after config changes isn't served from the webview cache.
@@ -101,11 +112,7 @@ pub fn create_splash(app: &AppHandle) -> tauri::Result<()> {
     // plain-text rendering of the payload — wry dropped native data: URL
     // support in 0.37). The label is localized in-page from
     // navigator.language.
-    WebviewWindowBuilder::new(
-        app,
-        SPLASH_LABEL,
-        WebviewUrl::App("pages/splash.html".into()),
-    )
+    WebviewWindowBuilder::new(app, SPLASH_LABEL, shell_page_url("splash.html"))
         .title("DeepSeek Harness")
         .inner_size(340.0, 240.0)
         .resizable(false)
@@ -229,12 +236,14 @@ pub fn show_error_window(app: &AppHandle, message: &str) -> tauri::Result<()> {
         "msg": message,
         "restart": restart_label,
         "ok": ok_label,
+        "ctlPort": crate::ctl_server::port(),
+        "ctlToken": crate::ctl_server::token(),
     });
     let init = format!("window.__DSHD_ERR__ = {};", payload);
     WebviewWindowBuilder::new(
         app,
         ERROR_LABEL,
-        WebviewUrl::App("pages/error.html".into()),
+        shell_page_url("error.html"),
     )
         .title("DeepSeek Harness")
         .inner_size(400.0, 250.0)
@@ -310,6 +319,7 @@ pub fn close_dialog_window(app: &AppHandle, kind: &str) {
     let label = match kind {
         "progress" => PROGRESS_LABEL,
         "spinner" => "updater-spinner",
+        "error" => ERROR_LABEL,
         _ => "updater-dialog",
     };
     if let Some(win) = app.get_webview_window(label) {

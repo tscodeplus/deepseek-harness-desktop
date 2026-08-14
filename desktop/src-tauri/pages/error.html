@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<!-- Frameless error window. Loaded as a static resource via the App URL
-     (data: URLs are unreliable on WKWebView); the runtime message and
+<!-- Frameless error window. Served by the shell's own control service
+     (http://127.0.0.1:{ctlPort}/pages/error.html) so it renders even when
+     the sidecar or the dsh web server is down; the runtime message and
      button labels are injected by the shell as window.__DSHD_ERR__ and
-     rendered with textContent (no HTML injection surface). Buttons go
-     through the injected electronAPI compat layer: on a data: URL page
-     window.close() is a no-op, and the compat commands close/restart
-     reliably. -->
+     rendered with textContent (no HTML injection surface). Buttons call the
+     shell control service directly (same origin, Bearer token injected). -->
 <html><head><meta charset="utf-8">
 <style>
   body{margin:0;padding:26px 28px;font-family:system-ui;background:#14141f;color:#e6e6f0}
@@ -28,10 +27,21 @@
   document.getElementById('btn-restart').textContent = e.restart;
   document.getElementById('btn-ok').textContent = e.ok;
   document.getElementById('btn-restart').onclick = function () {
-    if (window.electronAPI) { window.electronAPI.restartService(); } else { window.close(); }
+    if (e.ctlPort) {
+      fetch('http://127.0.0.1:' + e.ctlPort + '/restart-service', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + (e.ctlToken || '') }
+      });
+    } else { window.close(); }
   };
   document.getElementById('btn-ok').onclick = function () {
-    if (window.electronAPI) { window.electronAPI.close(); } else { window.close(); }
+    if (e.ctlPort) {
+      fetch('http://127.0.0.1:' + e.ctlPort + '/close-window', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + (e.ctlToken || ''), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'error' })
+      });
+    } else { window.close(); }
   };
 </script>
 </body></html>

@@ -58,7 +58,11 @@ pub fn run() {
             config::CLOSE_TO_TRAY.store(cfg.close_to_tray, std::sync::atomic::Ordering::SeqCst);
             let _ = windows::apply_theme(&handle, &cfg.theme);
 
-            // Tray + splash first, then the sidecar supervision stack. The
+            // Control service first: the splash/error windows load their
+            // pages from it (works even when the sidecar is down).
+            let _ = ctl_server::init(handle.clone());
+
+            // Tray + splash next, then the sidecar supervision stack. The
             // main window is NOT created here — it is built lazily by
             // reveal_main_window once the sidecar answers /api/health, so its
             // first navigation never hits a not-yet-listening server.

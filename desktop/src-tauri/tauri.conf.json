@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.deepseekharness.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev:sidecar && node scripts/copy-pages.cjs",
+    "beforeDevCommand": "pnpm dev:sidecar",
     "devUrl": "http://127.0.0.1:3080",
-    "beforeBuildCommand": "pnpm fetch:dsh && pnpm bundle-deps && pnpm build:sidecar && node scripts/copy-pages.cjs",
+    "beforeBuildCommand": "pnpm fetch:dsh && pnpm bundle-deps && pnpm build:sidecar",
     "frontendDist": "../ui"
   },
   "app": {
