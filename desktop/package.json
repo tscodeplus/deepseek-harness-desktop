@@ -11,8 +11,9 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:win": "tauri build --bundles nsis",
-    "tauri:build:mac": "tauri build --bundles dmg",
-    "bundle-deps": "node scripts/bundle-deps.cjs"
+    "tauri:build:mac": "tauri build --bundles app",
+    "bundle-deps": "node scripts/bundle-deps.cjs",
+    "smoke-test": "node scripts/smoke-test.cjs"
   },
   "dependencies": {
     "undici": "^6.21.0",

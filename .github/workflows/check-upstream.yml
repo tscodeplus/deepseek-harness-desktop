@@ -1,0 +1,99 @@
+name: Check Upstream
+
+# Dependency-following watcher (single-mode git-follow — see
+# Mydocs/IMPLEMENTATION_PLAN.md §5, §12.1): periodically compares the dsh
+# upstream repo against desktop/dsh-ref.json and opens a PR that bumps the
+# pinned ref when a new tag (preferred) or master commit appears.
+
+on:
+  schedule:
+    # Daily at 02:00 UTC.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check upstream refs
+        id: check
+        run: |
+          set -euo pipefail
+          REF_DOC="$(cat desktop/dsh-ref.json)"
+          CURRENT_REF="$(node -p "JSON.parse(process.argv[1]).ref" "$REF_DOC")"
+          echo "current ref: ${CURRENT_REF}"
+
+          # Newest tag (if any) and master HEAD.
+          NEWEST_TAG="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git \
+            | awk -F/ '{print $NF}' | sort -V | tail -1 || true)"
+          MASTER_HEAD="$(git ls-remote https://github.com/deepseek-ai/deepseek-harness.git refs/heads/master \
+            | awk '{print $1}')"
+          echo "newest upstream tag: ${NEWEST_TAG:-<none>}"
+          echo "master HEAD: ${MASTER_HEAD}"
+
+          # Resolve the newest tag to its commit (preferred follow target).
+          TAG_COMMIT=""
+          if [ -n "${NEWEST_TAG}" ]; then
+            TAG_COMMIT="$(git ls-remote https://github.com/deepseek-ai/deepseek-harness.git "refs/tags/${NEWEST_TAG}" \
+              | awk '{print $1}' || true)"
+          fi
+
+          if [ -n "${TAG_COMMIT}" ] && [ "${TAG_COMMIT}" != "${CURRENT_REF}" ]; then
+            echo "new tag found: ${NEWEST_TAG} (${TAG_COMMIT})"
+            echo "target_ref=${TAG_COMMIT}" >> "$GITHUB_OUTPUT"
+            echo "tag=${NEWEST_TAG}" >> "$GITHUB_OUTPUT"
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+            echo "note=跟随发版 tag ${NEWEST_TAG}" >> "$GITHUB_OUTPUT"
+          elif [ "${MASTER_HEAD}" != "${CURRENT_REF}" ]; then
+            echo "new master commit found: ${MASTER_HEAD}"
+            echo "target_ref=${MASTER_HEAD}" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "mode=commit" >> "$GITHUB_OUTPUT"
+            echo "note=上游 ${MASTER_HEAD:0:12} 无新 tag；由 check-upstream 自动跟随 master。发版 tag 出现后切回 release 模式。" >> "$GITHUB_OUTPUT"
+          else
+            echo "upstream unchanged"
+            echo "target_ref=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update bump PR
+        if: steps.check.outputs.target_ref != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REF: ${{ steps.check.outputs.target_ref }}
+          TAG: ${{ steps.check.outputs.tag }}
+          MODE: ${{ steps.check.outputs.mode }}
+          NOTE: ${{ steps.check.outputs.note }}
+        run: |
+          set -euo pipefail
+          BRANCH="chore/dsh-bump-${TARGET_REF:0:12}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          node -e '
+            const fs = require("fs");
+            const doc = JSON.parse(fs.readFileSync("desktop/dsh-ref.json", "utf8"));
+            doc.ref = process.env.TARGET_REF;
+            doc.tag = process.env.TAG || null;
+            doc.mode = process.env.MODE;
+            doc.note = process.env.NOTE;
+            doc.updatedBy = "check-upstream";
+            fs.writeFileSync("desktop/dsh-ref.json", JSON.stringify(doc, null, 2) + "\n");
+          '
+          git add desktop/dsh-ref.json
+          git commit -m "chore: bump dsh ref to ${TARGET_REF:0:12} ($MODE)"
+          git push -u origin "$BRANCH" 2>&1 | tail -3
+          # Idempotent: an existing PR for this branch is fine (its head is
+          # already pushed with the new ref).
+          gh pr create \
+            --base master \
+            --head "$BRANCH" \
+            --title "chore: bump dsh ref to ${TARGET_REF:0:12}" \
+            --body "上游变更（mode: $MODE${TAG:+，tag: $TAG}）。合并后 CI 将按新 ref 构建 + 冒烟；失败则回滚 ref（last-known-good）。" \
+            || gh pr view "$BRANCH" --json number --jq '"PR already exists: #\(.number)"'

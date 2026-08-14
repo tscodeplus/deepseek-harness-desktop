@@ -72,12 +72,31 @@ function main() {
   const argv = process.argv.slice(2);
   const refIdx = argv.indexOf('--ref');
   const overrideRef = refIdx >= 0 ? argv[refIdx + 1] : undefined;
+  const force = argv.includes('--force');
 
   const refDoc = JSON.parse(fs.readFileSync(REF_FILE, 'utf8'));
   const ref = overrideRef || refDoc.ref;
   if (!ref) {
     console.error('[fetch-dsh] dsh-ref.json is missing "ref"');
     process.exit(1);
+  }
+
+  // Fast path: the closure for this exact ref already exists (built by an
+  // earlier fetch). tauri build's beforeBuildCommand calls fetch:dsh too, so
+  // without this every build would re-clone + re-install + re-build.
+  if (!force) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(MANIFEST_FILE, 'utf8'));
+      if (manifest.ref === ref && fs.existsSync(CLI_ENTRY)) {
+        console.log(
+          `[fetch-dsh] closure already built for ref ${ref.slice(0, 12)} — skipping ` +
+            '(use --force to rebuild, or delete .dsh-build)',
+        );
+        return;
+      }
+    } catch {
+      /* no manifest yet — full build below */
+    }
   }
 
   fs.mkdirSync(BUILD_DIR, { recursive: true });
