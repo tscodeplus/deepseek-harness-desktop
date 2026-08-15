@@ -84,10 +84,13 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
         // hiddenInset-style: transparent title bar, content under it, native
-        // traffic lights parked where the WebUI's sidebar clears them.
+        // traffic lights parked where the WebUI's sidebar clears them. dsh's
+        // sidebar logo row starts at y=24 (measured in the web dist), so the
+        // buttons sit at y=12 (up from 18) to leave a visible gap above the
+        // logo — the same 16px left inset as OhMyAgent / anywhere-labs.
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0));
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 12.0));
     }
     #[cfg(not(target_os = "macos"))]
     {
