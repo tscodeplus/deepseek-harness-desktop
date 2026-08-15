@@ -299,10 +299,14 @@ function Invoke-FetchDsh {
 function Invoke-DesktopDeps {
     Write-Step "Installing shell dependencies (desktop/node_modules)"
 
+    # pnpm >=10.30 / 11 block unapproved dependency build scripts by
+    # default (strictDepBuilds). The desktop build never runs those scripts
+    # (tsc-only; esbuild etc. are dev-only), so disable the strict gate.
+    $installCmd = "pnpm install --frozen-lockfile --config.strict-dep-builds=false"
     if (Test-Path "$DesktopDir\pnpm-lock.yaml") {
-        $r = Invoke-Cmd "pnpm install --frozen-lockfile" $DesktopDir
+        $r = Invoke-Cmd $installCmd $DesktopDir
     } else {
-        $r = Invoke-Cmd "pnpm install" $DesktopDir
+        $r = Invoke-Cmd "pnpm install --config.strict-dep-builds=false" $DesktopDir
     }
     if (-not $r.Success) {
         Write-Fail "pnpm install failed for the shell"

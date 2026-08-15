@@ -139,7 +139,11 @@ jobs:
           key: tauri-tools-win
 
       - name: Install shell dependencies
-        run: cd desktop && pnpm install --frozen-lockfile
+        # pnpm 11 blocks unapproved dependency build scripts by default
+        # (strictDepBuilds). CI never runs esbuild (tsc-only build; the dsh
+        # closure's esbuild is pruned by bundle-deps), so disable the strict
+        # gate instead of approving scripts that are not needed here.
+        run: cd desktop && pnpm install --frozen-lockfile --config.strict-dep-builds=false
 
       - name: Check version consistency (desktop / tauri.conf.json)
         run: |
