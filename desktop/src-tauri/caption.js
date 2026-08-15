@@ -6,7 +6,9 @@
 // floating over the content, WebUI reserving a 44px inset):
 //   · an invisible 44px strip at the top of the window acts as the drag
 //     region (data-tauri-drag-region) and pushes the app frame down by the
-//     inset, exactly like that project's --dsh-desktop-titlebar-inset;
+//     inset, exactly like that project's --dsh-desktop-titlebar-inset
+//     (32px here — the native Windows caption height — so the page is not
+//     pushed down more than a normal title bar would);
 //   · minimize/maximize/close buttons float at the top-right, styled like
 //     the native overlay symbols (neutral color, subtle hover, red close);
 //   · while a modal is mounted ([aria-modal]), the strip stops intercepting
@@ -32,7 +34,7 @@
   }
 
   ready(function () {
-    var CAPTION_H = 44;
+    var CAPTION_H = 32;
     var zh = (navigator.language || '').toLowerCase().indexOf('zh') === 0;
     var T = zh
       ? { min: '最小化', max: '最大化', restore: '还原', close: '关闭' }

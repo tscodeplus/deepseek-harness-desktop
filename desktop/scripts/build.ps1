@@ -407,14 +407,15 @@ function Invoke-TauriBuild {
     }
 
     # tauri v2 has no artifact-name config — the NSIS file comes out as
-    # DeepSeek Harness_<v>_x64-setup.exe. Rename to the updater-friendly
-    # DeepSeek Harness-Setup-<v>.exe so the updater's latest.yml URL keeps working.
+    # DeepSeek Harness_<v>_x64-setup.exe. Rename to the canonical
+    # DeepSeek-Harness-Desktop-Setup-<v>.exe so the updater's latest.yml URL
+    # keeps working, then write latest.yml next to it.
     $setup = Get-ChildItem "$DesktopDir\src-tauri\target\release\bundle\nsis\DeepSeek Harness_*_x64-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($setup) {
         $version = (Get-Content "$DesktopDir\package.json" | ConvertFrom-Json).version
         # Rename-Item never overwrites an existing target, even with -Force —
         # drop a stale installer from a previous build first.
-        $target = "DeepSeek Harness-Setup-$version.exe"
+        $target = "DeepSeek-Harness-Desktop-Setup-$version.exe"
         $targetPath = "$DesktopDir\src-tauri\target\release\bundle\nsis\$target"
         try {
             if (Test-Path $targetPath) { Remove-Item $targetPath -Force -ErrorAction Stop }
@@ -423,6 +424,8 @@ function Invoke-TauriBuild {
             throw "Installer rename failed: $($_.Exception.Message). Fresh installer is still at $($setup.FullName)"
         }
         Write-OK "Renamed installer to $target"
+        # latest.yml consumed by the in-app updater (release-meta.cjs).
+        Invoke-Cmd "node scripts/release-meta.cjs `"$targetPath`" $version" $DesktopDir | Out-Null
     }
 
     Write-OK "Tauri build complete"

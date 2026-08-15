@@ -92,7 +92,7 @@ export function parseLatestYml(  text: string,
       if (key === 'files') {
         i++;
         while (i < lines.length && /^\s*-/.test(lines[i])) {
-          // url may be quoted ("DeepSeek Harness-Setup-0.1.0.exe") or a bare
+          // url may be quoted ("DeepSeek-Harness-Desktop-Setup-0.1.0.exe") or a bare
           // single token (a.exe). Capture the quoted form in full.
           const urlMatch =
             /url:\s*"([^"]*)"|url:\s*'([^']*)'|url:\s*(\S+)/.exec(lines[i]);

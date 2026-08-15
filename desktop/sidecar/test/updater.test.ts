@@ -28,29 +28,29 @@ describe('parseLatestYml', () => {
   it('parses flat keys and a files array with sha512 on the same line', () => {
     const yml = [
       'version: 0.1.0',
-      'path: DeepSeek Harness-Setup-0.1.0.exe',
+      'path: DeepSeek-Harness-Desktop-Setup-0.1.0.exe',
       'sha512: abc123',
       'releaseDate: 2026-08-15T00:00:00.000Z',
       'files:',
-      '  - url: "DeepSeek Harness-Setup-0.1.0.exe"',
+      '  - url: "DeepSeek-Harness-Desktop-Setup-0.1.0.exe"',
       '    sha512: abc123',
       '',
     ].join('\n');
     const out = parseLatestYml(yml);
     expect(out.version).toBe('0.1.0');
-    expect(out.path).toBe('DeepSeek Harness-Setup-0.1.0.exe');
+    expect(out.path).toBe('DeepSeek-Harness-Desktop-Setup-0.1.0.exe');
     expect(out.files).toHaveLength(1);
-    expect(out.files[0]).toEqual({ url: 'DeepSeek Harness-Setup-0.1.0.exe', sha512: 'abc123' });
+    expect(out.files[0]).toEqual({ url: 'DeepSeek-Harness-Desktop-Setup-0.1.0.exe', sha512: 'abc123' });
   });
 
   it('parses sha512 on the line after the url', () => {
     const yml = [
       'files:',
-      '  - url: "DeepSeek Harness-Setup-0.1.0.exe"',
+      '  - url: "DeepSeek-Harness-Desktop-Setup-0.1.0.exe"',
       '    sha512: def456',
     ].join('\n');
     const out = parseLatestYml(yml);
-    expect(out.files).toEqual([{ url: 'DeepSeek Harness-Setup-0.1.0.exe', sha512: 'def456' }]);
+    expect(out.files).toEqual([{ url: 'DeepSeek-Harness-Desktop-Setup-0.1.0.exe', sha512: 'def456' }]);
   });
 
   it('parses an unquoted single-token url', () => {

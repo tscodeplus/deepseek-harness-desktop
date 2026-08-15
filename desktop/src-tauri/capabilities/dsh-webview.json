@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dsh-webview",
+  "description": "Window-control permissions for the dsh WebUI origin. The main window loads http://127.0.0.1:<port> — a REMOTE origin in the packaged app, so the default capability (local-only) does not apply there; the frameless caption injected by caption.js (drag region + min/max/close) needs these commands on that origin. Any localhost port is matched (server port is configurable); the only localhost server is our bundled dsh.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}
