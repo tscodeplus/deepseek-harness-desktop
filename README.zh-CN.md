@@ -61,8 +61,8 @@
 | 平台 | 安装包 |
 |---|---|
 | Windows x64 | `DeepSeek-Harness-Desktop-Setup-<版本>.exe`（NSIS，LZMA 压缩） |
-| macOS Intel | `DeepSeek Harness-<版本>.dmg` |
-| macOS Apple Silicon | `DeepSeek Harness-<版本>-arm64.dmg` |
+| macOS Intel | `DeepSeek-Harness-<版本>.dmg` |
+| macOS Apple Silicon | `DeepSeek-Harness-<版本>-arm64.dmg` |
 
 说明：
 

@@ -61,8 +61,8 @@ Download the latest installer from the [Releases](https://github.com/tscodeplus/
 | Platform | Artifact |
 |---|---|
 | Windows x64 | `DeepSeek-Harness-Desktop-Setup-<version>.exe` (NSIS, LZMA) |
-| macOS Intel | `DeepSeek Harness-<version>.dmg` |
-| macOS Apple Silicon | `DeepSeek Harness-<version>-arm64.dmg` |
+| macOS Intel | `DeepSeek-Harness-<version>.dmg` |
+| macOS Apple Silicon | `DeepSeek-Harness-<version>-arm64.dmg` |
 
 Notes:
 
