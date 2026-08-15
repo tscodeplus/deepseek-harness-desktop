@@ -66,8 +66,12 @@ pub fn run() {
             // main window is NOT created here — it is built lazily by
             // reveal_main_window once the sidecar answers /api/health, so its
             // first navigation never hits a not-yet-listening server.
+            // Splash is behind windows::SPLASH_ENABLED (temporarily off —
+            // it duplicates the WebUI's own boot loading page).
             let _ = tray::create_tray(&handle, &cfg);
-            let _ = windows::create_splash(&handle);
+            if windows::SPLASH_ENABLED {
+                let _ = windows::create_splash(&handle);
+            }
 
             tauri::async_runtime::spawn(async move {
                 sidecar::init(&handle).await;

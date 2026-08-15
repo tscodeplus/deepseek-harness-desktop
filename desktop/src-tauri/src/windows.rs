@@ -16,6 +16,12 @@ pub const SPLASH_LABEL: &str = "splash";
 pub const ERROR_LABEL: &str = "error";
 pub const PROGRESS_LABEL: &str = "updater-progress";
 
+/// Temporary kill-switch for the splash window (2026-08-15): the splash
+/// duplicates the WebUI's own boot loading page (HARNESS wordmark + spinner),
+/// so it is disabled while we evaluate the redundancy. The page and window
+/// code stay in place — flip this back to re-enable.
+pub const SPLASH_ENABLED: bool = false;
+
 /// Shell-owned pages (splash / error) are served by the shell's own control
 /// service (ctl_server.rs) — they must render even when the sidecar or the
 /// dsh web server is down, which is exactly when the error window appears.
@@ -51,12 +57,14 @@ pub fn webui_url(app: &AppHandle, cache_bust: bool) -> String {
 /// navigation never hits a not-yet-listening server (an early load would
 /// leave the webview stuck on the ERR_CONNECTION_REFUSED error page).
 ///
-/// Immersive shell (mirrors the old Electron frameless + titleBarOverlay
-/// look): no native toolbar. On Windows/Linux the window keeps the NATIVE
-/// title bar — unlike OhMyAgent, dsh's WebUI is a plain browser app with no
-/// self-drawn caption (no drag region, no window buttons), so a frameless
-/// window would have no minimize/maximize/close controls at all. macOS keeps
-/// the native traffic lights via TitleBarStyle::Overlay.
+/// Immersive shell (mirrors the Electron frameless + titleBarOverlay look
+/// used by OhMyAgent and anywhere-labs/deepseek-harness-desktop): no native
+/// toolbar. On Windows/Linux the window is fully frameless and caption.js —
+/// injected via initialization_script, WITHOUT touching upstream dsh source —
+/// adds the overlay chrome the WebUI does not draw itself: an invisible
+/// 44px drag region at the top (the page is pushed down by that inset) plus
+/// floating minimize/maximize/close buttons driving the core window
+/// commands. macOS keeps the native traffic lights via TitleBarStyle::Overlay.
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     let url = WebviewUrl::External(
         webui_url(app, false)
@@ -80,9 +88,12 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // Windows/Linux: native chrome (title bar + min/max/close). Explicit
-        // for documentation purposes — decorations(true) is the default.
-        builder = builder.decorations(true);
+        // Windows/Linux: frameless like OhMyAgent — caption.js (injected at
+        // runtime, upstream untouched) provides the drag region and window
+        // buttons.
+        builder = builder
+            .decorations(false)
+            .initialization_script(include_str!("../caption.js"));
     }
     builder.build()?;
     Ok(())
