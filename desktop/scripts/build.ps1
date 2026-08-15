@@ -293,6 +293,30 @@ function Invoke-FetchDsh {
 }
 
 # ---------------------------------------------------------------------------
+# Shell dependencies (typescript, tauri CLI, undici, ws ...)
+# ---------------------------------------------------------------------------
+
+function Invoke-DesktopDeps {
+    Write-Step "Installing shell dependencies (desktop/node_modules)"
+
+    if (Test-Path "$DesktopDir\pnpm-lock.yaml") {
+        $r = Invoke-Cmd "pnpm install --frozen-lockfile" $DesktopDir
+    } else {
+        $r = Invoke-Cmd "pnpm install" $DesktopDir
+    }
+    if (-not $r.Success) {
+        Write-Fail "pnpm install failed for the shell"
+        Write-Host $r.Output
+        throw "pnpm install failed"
+    }
+    if (-not (Test-Path "$DesktopDir\node_modules\.bin\tsc.cmd")) {
+        Write-Fail "tsc not found after pnpm install — shell deps incomplete"
+        throw "shell deps incomplete"
+    }
+    Write-OK "Shell dependencies installed"
+}
+
+# ---------------------------------------------------------------------------
 # Bundle dependencies
 # ---------------------------------------------------------------------------
 
@@ -484,6 +508,7 @@ if (-not $SkipFetchDsh) {
 }
 
 Invoke-VersionCheck
+Invoke-DesktopDeps
 Invoke-BundleDeps
 Invoke-SidecarBuild
 Invoke-NodeRuntime
