@@ -239,8 +239,15 @@ jobs:
         run: |
           APP="desktop/src-tauri/target/release/bundle/macos/DeepSeek Harness.app"
           BIN="$APP/Contents/MacOS/dsh-desktop"
+          ls -la "$APP/Contents/MacOS/" || true
+          file "$BIN" || true
           "$BIN" > /tmp/dsh-smoke.log 2>&1 &
           APP_PID=$!
+          sleep 5
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "WARN: app exited within 5s"
+            tail -20 /tmp/dsh-smoke.log
+          fi
           for i in $(seq 1 60); do
             if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
               echo "dsh web OK on :3080"
@@ -257,6 +264,8 @@ jobs:
           done
           echo "health check failed; app log:"
           tail -40 /tmp/dsh-smoke.log
+          echo "--- process snapshot ---"
+          ps aux | grep -iE "dsh|node" | grep -v grep | head -10 || true
           kill $APP_PID 2>/dev/null || true
           exit 1
 

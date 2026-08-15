@@ -3,7 +3,6 @@ desktop/.sidecar-deps/
 desktop/.dsh-build/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
-desktop/src-tauri/Cargo.lock
 ui/pages/
 ui/dist/
 node_modules/
