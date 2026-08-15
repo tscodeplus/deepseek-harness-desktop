@@ -381,20 +381,22 @@ jobs:
       - name: Generate merged latest-mac.yml (x64 + arm64)
         run: |
           VERSION=$(node -p "require('./desktop/package.json').version")
-          DMG_X64=$(ls mac-x64/dmg/DeepSeek\ Harness-*.dmg | head -1)
-          DMG_ARM64=$(ls mac-arm64/dmg/DeepSeek\ Harness-*-arm64.dmg | head -1)
+          # upload-artifact stores the glob's basename at the artifact root
+          # (no `dmg/` subdir survives), so look there, not under dmg/.
+          DMG_X64=$(ls mac-x64/DeepSeek\ Harness-*.dmg | head -1)
+          DMG_ARM64=$(ls mac-arm64/DeepSeek\ Harness-*-arm64.dmg | head -1)
           if [ -z "$DMG_X64" ] || [ -z "$DMG_ARM64" ]; then
             echo "missing dmg: x64='$DMG_X64' arm64='$DMG_ARM64'"
             exit 1
           fi
           node desktop/scripts/release-meta.cjs "$DMG_X64" "$DMG_ARM64" "$VERSION" latest-mac.yml
-          mv latest-mac.yml mac-x64/dmg/
+          mv latest-mac.yml mac-x64/
 
       - name: Upload merged latest-mac.yml
         uses: actions/upload-artifact@v6
         with:
           name: dsh-desktop-mac-meta
-          path: mac-x64/dmg/latest-mac.yml
+          path: mac-x64/latest-mac.yml
           if-no-files-found: error
 
   # ------------------------------------------------------------------
