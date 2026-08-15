@@ -112,17 +112,6 @@ npx tauri build --bundles app   # 产出 .app；dmg 在 CI 中用 hdiutil 组装
 
 构建完全可复现：`desktop/dsh-ref.json` 钉住上游 commit，CI 对 dsh 闭包、Node 运行时与 cargo 产物做了缓存。
 
-## 发布流程
-
-推送 `v*` 标签（如 `v0.1.0`）会触发 [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)：
-
-1. 并行构建 Windows NSIS 与 macOS x64/arm64 两个 dmg
-2. 将安装包重命名为更新器友好的 `DeepSeek-Harness-Desktop-Setup-<v>.exe`
-3. 生成 `latest.yml`（Windows）与合并后的 `latest-mac.yml`（macOS 双架构）
-4. 自动创建 GitHub Release 并附带全部产物
-
-[`.github/workflows/check-upstream.yml`](.github/workflows/check-upstream.yml) 每天检查上游仓库，当 DeepSeek Harness 发布新 tag 或 commit 时自动开 PR 更新钉住的版本。
-
 ## 目录结构
 
 ```

@@ -112,17 +112,6 @@ npx tauri build --bundles app   # .app; dmg is assembled with hdiutil in CI
 
 The build is fully reproducible: `desktop/dsh-ref.json` pins the exact upstream commit, and CI caches the dsh closure, Node runtime, and cargo artifacts.
 
-## Release pipeline
-
-Pushing a `v*` tag (e.g. `v0.1.0`) triggers [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml), which:
-
-1. Builds Windows NSIS + macOS x64/arm64 DMGs in parallel
-2. Renames the installer to the updater-friendly `DeepSeek-Harness-Desktop-Setup-<v>.exe`
-3. Generates `latest.yml` (Windows) and merged `latest-mac.yml` (both macOS arches)
-4. Creates a GitHub Release with all artifacts attached
-
-[`.github/workflows/check-upstream.yml`](.github/workflows/check-upstream.yml) watches the upstream repository daily and opens a PR that bumps the pinned ref when DeepSeek Harness publishes a new tag or commit.
-
 ## Project layout
 
 ```
