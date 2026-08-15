@@ -49,7 +49,9 @@ function main() {
     `version: ${version}`,
     `files:`,
     ...fileEntries.map(
-      (f) => `  - url: ${f.fileName}\n    sha512: ${f.sha512}\n    size: ${f.size}`,
+      // Quote the url: "DeepSeek Harness-Setup-0.1.0.exe" contains spaces and
+      // the updater's YAML reader (parseLatestYml) must capture the full path.
+      (f) => `  - url: "${f.fileName}"\n    sha512: ${f.sha512}\n    size: ${f.size}`,
     ),
     `path: ${first.fileName}`,
     `sha512: ${first.sha512}`,

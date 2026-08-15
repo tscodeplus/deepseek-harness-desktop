@@ -30,7 +30,7 @@ function stripLeadingV(v: string): string {
 
 /** Compare two version strings. Returns negative if a < b, 0 equal, positive if a > b.
  *  Handles beta prerelease: 2.0.0-beta3 > 2.0.0-beta2 > 2.0.0-beta > 2.0.0. */
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
   if (pa.major !== pb.major) return pa.major - pb.major;
@@ -65,7 +65,7 @@ function parseSemver(v: string): ParsedSemver {
 }
 
 /** Minimal YAML parser for latest.yml format (flat key: value + array of objects). */
-function parseLatestYml(  text: string,
+export function parseLatestYml(  text: string,
 ): {
   version: string;
   files: Array<{ url: string; sha512: string }>;
@@ -92,7 +92,10 @@ function parseLatestYml(  text: string,
       if (key === 'files') {
         i++;
         while (i < lines.length && /^\s*-/.test(lines[i])) {
-          const urlMatch = /url:\s*(\S+)/.exec(lines[i]);
+          // url may be quoted ("DeepSeek Harness-Setup-0.1.0.exe") or a bare
+          // single token (a.exe). Capture the quoted form in full.
+          const urlMatch =
+            /url:\s*"([^"]*)"|url:\s*'([^']*)'|url:\s*(\S+)/.exec(lines[i]);
           let sha = '';
           const shaSameLine = /sha512:\s*(\S+)/.exec(lines[i]);
           if (shaSameLine) {
@@ -105,7 +108,8 @@ function parseLatestYml(  text: string,
             }
           }
           if (urlMatch) {
-            result.files.push({ url: urlMatch[1], sha512: sha });
+            const url = urlMatch[1] ?? urlMatch[2] ?? urlMatch[3];
+            result.files.push({ url, sha512: sha });
           }
           i++;
         }
