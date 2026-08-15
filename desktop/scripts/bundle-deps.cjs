@@ -29,6 +29,11 @@ const STAGING = path.join(DESKTOP, '.sidecar-deps');
 const STAGING_NM = path.join(STAGING, 'node_modules');
 const DSH_REF_FILE = path.join(DESKTOP, 'dsh-ref.json');
 const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
+// Bump when the flattening logic changes so the fast path rebuilds stale
+// staging (v2: workspace members added; v3: rolldown skip + node-pty
+// prebuild pruning + leaner dsh runtime closure; v4: keep node-pty build/
+// for Linux node-gyp fallback).
+const BUNDLE_DEPS_VERSION = 4;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -75,6 +80,7 @@ function findNativeFiles(dir) {
 const SKIP_PATTERNS = [
   /\.d\.ts$/,           // TypeScript declarations
   /\.map$/,             // source maps
+  /\.pdb$/,             // Windows debug symbols (PDB) — dev-only
   /\.ts$/,              // TypeScript sources (except .d.ts above)
   /^docs?\//,           // documentation dirs
   /^examples?\//,       // example dirs
@@ -132,6 +138,8 @@ const SKIP_PACKAGES = new Set([
   'postcss',
   'openapi-typescript-helpers',
   'vite-tsconfig-paths',
+  'rolldown',
+  '@rolldown/pluginutils',
   'tailwindcss',
   '@tailwindcss/vite',
   '@vitejs/plugin-react',
@@ -172,6 +180,8 @@ function isDevOnlyPackage(pkgName) {
   // lightningcss + its per-platform binary packages: build-time CSS minifier
   // (vite dev chain), never imported by the dsh runtime.
   if (pkgName.startsWith('lightningcss')) return true;
+  // @rolldown/binding-*: Rust bundler used by vite 8 at build time only.
+  if (pkgName.startsWith('@rolldown/')) return true;
   return false;
 }
 
@@ -186,6 +196,28 @@ const PACKAGE_SUBPATH_SKIPS = {
   '@google/genai': ['dist/web', 'dist/index.cjs', 'dist/index.mjs'],
   // main=dist/index.js — browser/ is the bundler build.
   'jimp': ['browser'],
+  // node-pty: only lib/ (loader) + prebuilds/ (target platform, pruned
+  // below) + build/ (node-gyp fallback — node-pty ships NO linux prebuilds,
+  // so Linux builds rely on the compiled build/Release/pty.node) are needed
+  // at runtime; deps/, third_party/, src/, scripts/ are node-gyp sources.
+  'node-pty': ['deps', 'third_party', 'src', 'scripts'],
+};
+
+// Per-package post-copy pruning. node-pty ships prebuilds for every
+// platform (~60MB) but only the current target's binaries are reachable.
+const PACKAGE_POST_COPY = {
+  'node-pty': (pkgDir) => {
+    const prebuilds = path.join(pkgDir, 'prebuilds');
+    if (!fs.existsSync(prebuilds)) return;
+    for (const entry of fs.readdirSync(prebuilds, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const keepPrefix = `${TARGET_OS}-${TARGET_ARCH}`;
+      if (!entry.name.startsWith(keepPrefix)) {
+        fs.rmSync(path.join(prebuilds, entry.name), { recursive: true, force: true });
+        log(`  ✂ node-pty/prebuilds/${entry.name} (wrong platform)`);
+      }
+    }
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -422,6 +454,25 @@ function collectPnpmDeps(projectDir) {
   // tree is an array — walk each root item
   if (Array.isArray(tree)) {
     for (const item of tree) {
+      // Workspace members are reported as array items, not as dependencies
+      // of the root project. Some are only reachable at runtime through
+      // package-name imports (e.g. @deepseek-ai/dsh-atomic-write, imported
+      // by dsh-agent-presets) but absent from the walked dependency graph
+      // due to pnpm list de-dup quirks — a missing one crashes dsh at boot
+      // with ERR_MODULE_NOT_FOUND. Include every item with a resolvable
+      // path, except the workspace root itself (its path IS the dsh
+      // checkout — copying it would duplicate the whole closure).
+      if (
+        item.path &&
+        item.name !== '@deepseek-ai/dsh-root' &&
+        item.path !== projectDir &&
+        !seen.has(item.path)
+      ) {
+        seen.set(item.path, {
+          name: item.name,
+          version: item.version || 'unknown',
+        });
+      }
       if (item.dependencies) walk(item.dependencies);
     }
   }
@@ -492,6 +543,8 @@ function copyPnpmPkg(pkgPath, destBase, isNativeOverride = false) {
       }
     }
   }
+  const postCopy = PACKAGE_POST_COPY[pkgName];
+  if (postCopy) postCopy(destPath);
   log(`  ${pkgName}@${pkgJson.version || '?'}`);
 }
 
@@ -532,6 +585,20 @@ function copyRuntimeDist(src, dest, visited = new Set()) {
     if (entry.name === 'node_modules' && (entry.isDirectory() || entry.isSymbolicLink())) {
       continue;
     }
+    // Upstream dev/docs material — never read by the running dsh CLI:
+    // .agents/notes (dev journal), CI configs, docs, examples, build
+    // scripts, the website workspace, cordis vendor copy (resolved as a
+    // package from the flat node_modules) and native C/C++ sources.
+    if (
+      entry.isDirectory() &&
+      RUNTIME_DIST_SKIP_DIRS.has(entry.name)
+    ) {
+      continue;
+    }
+    // Dev-only artifacts: TypeScript incremental build info + source maps.
+    if (!entry.isDirectory() && /\.(tsbuildinfo|map)$/.test(entry.name)) {
+      continue;
+    }
     const s = path.join(src, entry.name);
     const d = path.join(dest, entry.name);
     if (entry.isSymbolicLink()) {
@@ -555,6 +622,19 @@ function copyRuntimeDist(src, dest, visited = new Set()) {
     }
   }
 }
+
+const RUNTIME_DIST_SKIP_DIRS = new Set([
+  '.agents',
+  '.claude',
+  '.github',
+  'docs',
+  'examples',
+  'native',
+  'patches',
+  'scripts',
+  'vendor',
+  'website',
+]);
 
 function buildRuntimeDist() {
   log('');
@@ -697,6 +777,7 @@ function main() {
       ? fs.readdirSync(STAGING_NM).length
       : 0;
     if (
+      manifest.bundleDepsVersion === BUNDLE_DEPS_VERSION &&
       manifest.ref === pinnedRef &&
       manifest.targetPlatform === TARGET_PLATFORM &&
       count > 100 &&
@@ -829,6 +910,7 @@ function main() {
     BUNDLE_MANIFEST_FILE,
     JSON.stringify(
       {
+        bundleDepsVersion: BUNDLE_DEPS_VERSION,
         ref: pinnedRef,
         targetPlatform: TARGET_PLATFORM,
         packageCount: count,

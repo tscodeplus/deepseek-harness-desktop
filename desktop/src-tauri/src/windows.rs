@@ -52,9 +52,11 @@ pub fn webui_url(app: &AppHandle, cache_bust: bool) -> String {
 /// leave the webview stuck on the ERR_CONNECTION_REFUSED error page).
 ///
 /// Immersive shell (mirrors the old Electron frameless + titleBarOverlay
-/// look): no native toolbar. On Windows the window is fully frameless and the
-/// WebUI draws its own caption — a drag region plus minimize/maximize/close
-/// buttons. macOS keeps the native traffic lights via TitleBarStyle::Overlay.
+/// look): no native toolbar. On Windows/Linux the window keeps the NATIVE
+/// title bar — unlike OhMyAgent, dsh's WebUI is a plain browser app with no
+/// self-drawn caption (no drag region, no window buttons), so a frameless
+/// window would have no minimize/maximize/close controls at all. macOS keeps
+/// the native traffic lights via TitleBarStyle::Overlay.
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     let url = WebviewUrl::External(
         webui_url(app, false)
@@ -78,9 +80,9 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // Windows/Linux: no native chrome at all — the WebUI's caption strip
-        // (drag region + window buttons) replaces it.
-        builder = builder.decorations(false);
+        // Windows/Linux: native chrome (title bar + min/max/close). Explicit
+        // for documentation purposes — decorations(true) is the default.
+        builder = builder.decorations(true);
     }
     builder.build()?;
     Ok(())
