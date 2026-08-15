@@ -18,6 +18,7 @@ Mydocs/
 
 # Local agent instructions — kept out of the repository on purpose.
 AGENTS.md
+CLAUDE.md
 
 # OS / editor
 .DS_Store
