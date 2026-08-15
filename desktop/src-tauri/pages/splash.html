@@ -1,20 +1,28 @@
 <!DOCTYPE html>
-<!-- Splash shown while the sidecar boots — same look as the Electron splash
-     (desktop/src/main.ts:createSplashHtml). Loaded as a static resource via
-     the App URL: data: URLs are unreliable on WKWebView (charset detection,
-     plain-text rendering — wry dropped native data: URL support in 0.37).
-     The label is localized in-page from navigator.language. -->
+<!-- Splash shown while the sidecar boots dsh — same look as the upstream
+     boot loading page (packages/client/web/src/AppRoot.tsx + AppRoot.module.css):
+     light neutral background, "HARNESS" wordmark, blue ring spinner. The
+     WebUI's own boot page then continues the identical look once the server
+     is up (wordmark → spinner → hint, so the transition is seamless).
+     Loaded as a static resource via the App URL: data: URLs are unreliable
+     on WKWebView (charset detection, plain-text rendering — wry dropped
+     native data: URL support in 0.37). The hint is localized in-page from
+     navigator.language; the stage is "starting the service", so unlike the
+     upstream hint ("Loading plugins…") the label says Starting…/启动中…. -->
 <html><head><meta charset="utf-8">
 <script>
   // Set before the CSS applies to avoid a flash of unstyled background.
   // WebView2 paints its opaque default (white) background under a transparent
   // <body> — the rounded corners would show white. So Windows keeps the
-  // gradient on <body> (WebView2 clips border-radius), while macOS uses the
+  // background on <body> (WebView2 clips border-radius), while macOS uses the
   // inner-card variant: WKWebView propagates a root-element background over
   // the canvas, ignoring border-radius.
   document.documentElement.className = navigator.userAgent.includes('Windows') ? 'win' : '';
 </script>
 <style>
+  /* Tokens mirror upstream AppRoot.module.css fallbacks:
+     bg-base #f9fafb · label-primary #0f1115 · label-tertiary #81858c ·
+     border-l2 rgb(0 0 0 / 10%) · brand-primary #3964fe. */
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;background:transparent}
   body{
@@ -22,41 +30,41 @@
     display:flex;align-items:center;justify-content:center;
     user-select:none;-webkit-user-select:none;
   }
-  /* Windows keeps the pre-card rendering path, byte-for-byte: the gradient
-     and radius live on <body> (WebView2 clips border-radius) with
-     overflow:hidden, and .card degrades to a transparent, radius-free
-     container — leaving its border-radius/overflow out of the composited
-     alpha edges (a transparent rounded layer on top of the gradient produced
-     a soft blurred halo around the window on WebView2). macOS needs the
-     card variant instead: WKWebView propagates a root-element background
-     over the (rectangular) canvas, ignoring border-radius. */
   html.win body{
     height:100vh;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;padding-top:18px;
-    background:linear-gradient(135deg,#6366f1,#4f46e5);
+    align-items:center;justify-content:center;
+    background:#f9fafb;
     border-radius:12px;overflow:hidden;
   }
-  html.win .card{background:transparent;border-radius:0;overflow:visible;padding-top:0}
+  html.win .card{background:transparent;border-radius:0;overflow:visible}
   .card{
     width:100%;height:100%;
     display:flex;flex-direction:column;
     align-items:center;justify-content:center;
-    padding-top:18px;
-    background:linear-gradient(135deg,#6366f1,#4f46e5);
-    color:#fff;border-radius:12px;overflow:hidden;
+    gap:16px;
+    background:#f9fafb;border-radius:12px;overflow:hidden;
   }
-  .logo{width:52px;height:52px;margin-bottom:20px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center}
-  .spin-o{width:28px;height:28px;border:3.5px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
-  .text{font-size:17px;font-weight:600;letter-spacing:1px;text-align:center;padding:0 24px;opacity:.9}
+  .wordmark{
+    font-size:16px;line-height:24px;font-weight:600;
+    letter-spacing:0.08em;color:#0f1115;
+  }
+  .spinner{
+    width:20px;height:20px;border-radius:50%;
+    border:2px solid rgb(0 0 0 / 10%);
+    border-top-color:#3964fe;
+    animation:spin .8s linear infinite;
+  }
+  .hint{font-size:12px;line-height:18px;color:#81858c}
   @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body>
   <div class="card">
-    <div class="logo"><div class="spin-o"></div></div>
-    <div class="text" id="text">DeepSeek Harness Starting…</div>
+    <div class="wordmark">HARNESS</div>
+    <div class="spinner"></div>
+    <div class="hint" id="hint">Starting…</div>
   </div>
   <script>
     if (navigator.language && navigator.language.toLowerCase().startsWith('zh')) {
-      document.getElementById('text').textContent = 'DeepSeek Harness 启动中…';
+      document.getElementById('hint').textContent = '启动中…';
     }
   </script>
 </body></html>

@@ -100,7 +100,9 @@ fn window_icon() -> tauri::image::Image<'static> {
         .expect("128x128.png embedded")
 }
 
-/// Splash shown while the sidecar boots. Same look as the Electron splash.
+/// Splash shown while the sidecar boots dsh. Same look as the upstream boot
+/// loading page (HARNESS wordmark + blue ring spinner on a light background,
+/// see pages/splash.html).
 ///
 /// Created hidden and shown on page-load-Finished: a visible window before the
 /// webview paints shows the default white background for a frame (the
@@ -110,8 +112,9 @@ pub fn create_splash(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(SPLASH_LABEL).is_some() {
         return Ok(());
     }
-    // Same look as the Electron splash (desktop/src/main.ts:createSplashHtml):
-    // indigo gradient, frosted logo tile with spinner, rounded corners.
+    // Same look as the upstream boot loading page
+    // (packages/client/web/src/AppRoot.tsx): light background, "HARNESS"
+    // wordmark, blue ring spinner, rounded corners.
     // The page is a static resource (pages/splash.html) loaded over the App
     // URL — data: URLs are unreliable on WKWebView (charset detection, and
     // plain-text rendering of the payload — wry dropped native data: URL
