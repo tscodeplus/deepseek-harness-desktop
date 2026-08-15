@@ -41,8 +41,10 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // codex / acp / dsh-sdk — they resolve the user's own CLI from PATH) but
 // prune ONLY the @anthropic-ai/claude-agent-sdk per-platform native binary
 // (~260 MB): dsh always passes pathToClaudeCodeExecutable resolved from PATH,
-// so the SDK's bundled binary is dead weight.
-const BUNDLE_DEPS_VERSION = 8;
+// so the SDK's bundled binary is dead weight;
+// v9: keep the full @deepseek-ai/dsh-sdk* family (client/protocol/jsonrpc),
+// including the jsonrpc demo package (tiny; kept for parity with upstream).
+const BUNDLE_DEPS_VERSION = 9;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -183,7 +185,6 @@ const SKIP_PACKAGES = new Set([
   'dsh-jsonrpc-agent-pkg', // JSON-RPC spine demo deploy root (dep-only manifest)
   '@deepseek-ai/dsh-acp-demo',
   '@deepseek-ai/dsh-agent-spine-demo',
-  '@deepseek-ai/dsh-sdk-jsonrpc-demo',
   // @anthropic-ai/claude-agent-sdk per-platform native binary packages: each
   // ships a ~260 MB claude CLI binary — the single largest item in the
   // bundle. The JS SDK (@anthropic-ai/claude-agent-sdk) IS kept: dsh's
