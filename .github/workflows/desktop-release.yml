@@ -99,6 +99,7 @@ jobs:
         with:
           node-version-file: desktop/.node-version
           cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
           package-manager-cache: false
 
       - name: Install Rust toolchain
