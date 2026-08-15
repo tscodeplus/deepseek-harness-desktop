@@ -103,23 +103,31 @@
       return b;
     }
 
-    var invoke = window.__TAURI_INTERNALS__.invoke;
+    // NOTE: core window commands must be invoked as `plugin:window|<cmd>` —
+    // tauri's ACL allowed-commands map keys core-plugin permissions in that
+    // form (tauri-utils acl/build.rs), and the raw invoke string is matched
+    // against it; the `core:window:<cmd>` form is denied ("not allowed by
+    // ACL"). Tauri's own drag-region script uses the same `plugin:window|`
+    // form.
+    var invoke = function (cmd) {
+      return window.__TAURI_INTERNALS__.invoke('plugin:window|' + cmd);
+    };
     buttons.appendChild(mkButton(T.min, ICON_MIN, '', function () {
-      invoke('core:window:minimize');
+      invoke('minimize');
     }));
     var maxBtn = mkButton(T.max, ICON_MAX, '', function () {
-      invoke('core:window:toggle_maximize');
+      invoke('toggle_maximize');
     });
     buttons.appendChild(maxBtn);
     buttons.appendChild(mkButton(T.close, ICON_CLOSE, 'dshd-close', function () {
-      invoke('core:window:close');
+      invoke('close');
     }));
 
     // The maximize button doubles as restore: re-query the window state on
     // resize (fires when the OS window is maximized/restored).
     function refreshMax() {
       try {
-        invoke('core:window:is_maximized').then(function (v) {
+        invoke('is_maximized').then(function (v) {
           maxBtn.innerHTML = v ? ICON_RESTORE : ICON_MAX;
           maxBtn.title = v ? T.restore : T.max;
           maxBtn.setAttribute('aria-label', maxBtn.title);
@@ -133,7 +141,7 @@
     // the native title bar.
     caption.addEventListener('dblclick', function (e) {
       if (e.target.closest && e.target.closest('#dshd-caption-buttons')) return;
-      invoke('core:window:toggle_maximize');
+      invoke('toggle_maximize');
     });
 
     caption.appendChild(buttons);
