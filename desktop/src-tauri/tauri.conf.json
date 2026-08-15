@@ -25,7 +25,7 @@
       "icons/icon.png"
     ],
     "resources": {
-      "../.dsh-build/dist": "sidecar/dsh-dist",
+      "../.sidecar-deps/dsh-dist": "sidecar/dsh-dist",
       "../.sidecar-deps/node_modules": "sidecar/node_modules",
       "../.sidecar-deps/root": "sidecar",
       "../.sidecar-deps/runtime": "sidecar"

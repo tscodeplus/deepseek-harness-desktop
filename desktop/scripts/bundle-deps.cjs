@@ -32,6 +32,13 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
+// Pruned dsh runtime closure (dsh-dist minus node_modules). The raw
+// .dsh-build/dist embeds pnpm's .pnpm virtual store — tauri-build walks
+// every resource file and its junction tree (49k+ rerun-if-changed lines,
+// stack overflow, hundreds of MB of duplicate deps). Dependencies resolve
+// from the flat staging node_modules instead.
+const DSH_DIST_SRC = path.join(DESKTOP, '.dsh-build', 'dist');
+const DSH_RUNTIME_DIST = path.join(STAGING, 'dsh-dist');
 
 // Native .node addons that must be present (and Node-ABI) in the staging tree.
 // dsh's native set: node-pty (PTY/ConPTY), koffi (Windows FFI), sharp
@@ -512,6 +519,55 @@ function copyPrunedServerDist(src, dest) {
 }
 
 /**
+ * Copy the dsh build closure into .sidecar-deps/dsh-dist for bundling,
+ * dropping every node_modules subtree (the flat staging tree resolves
+ * dependencies at runtime). Unlike copyDir, this keeps ALL other files
+ * (docs, .ts sources, license files) — the closure is the upstream checkout
+ * as-is, and dsh's lazy loaders read .ts/.md paths at runtime.
+ */
+function copyRuntimeDist(src, dest, visited = new Set()) {
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of entries) {
+    if (entry.name === 'node_modules' && (entry.isDirectory() || entry.isSymbolicLink())) {
+      continue;
+    }
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isSymbolicLink()) {
+      try {
+        const real = fs.realpathSync(s);
+        const st = fs.statSync(real);
+        if (st.isDirectory()) {
+          if (visited.has(real)) continue;
+          visited.add(real);
+          copyRuntimeDist(real, d, visited);
+        } else {
+          fs.copyFileSync(real, d);
+        }
+      } catch {
+        // Broken symlink (optional platform dep) — skip
+      }
+    } else if (entry.isDirectory()) {
+      copyRuntimeDist(s, d, visited);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+function buildRuntimeDist() {
+  log('');
+  log('Building pruned dsh runtime closure (dsh-dist, no node_modules)...');
+  fs.rmSync(DSH_RUNTIME_DIST, { recursive: true, force: true });
+  if (!fs.existsSync(DSH_DIST_SRC)) {
+    throw new Error(`dsh build closure not found at ${DSH_DIST_SRC} — run fetch:dsh first`);
+  }
+  copyRuntimeDist(DSH_DIST_SRC, DSH_RUNTIME_DIST);
+  log(`✅ Runtime closure ready: ${DSH_RUNTIME_DIST}`);
+}
+
+/**
  * For packages whose dependencies require a different major version than what
  * ended up in the flat node_modules, copy the correct version into a nested
  * node_modules directory under that package.
@@ -643,7 +699,8 @@ function main() {
     if (
       manifest.ref === pinnedRef &&
       manifest.targetPlatform === TARGET_PLATFORM &&
-      count > 100
+      count > 100 &&
+      fs.existsSync(DSH_RUNTIME_DIST)
     ) {
       log(
         `Staging already complete for ${TARGET_PLATFORM} @ ${pinnedRef.slice(0, 12)} ` +
@@ -767,6 +824,7 @@ function main() {
 
   // 7. Report stats
   const count = fs.readdirSync(STAGING_NM).length;
+  buildRuntimeDist();
   fs.writeFileSync(
     BUNDLE_MANIFEST_FILE,
     JSON.stringify(
