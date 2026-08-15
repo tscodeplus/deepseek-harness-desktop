@@ -174,6 +174,22 @@ jobs:
         timeout-minutes: 90
         run: cd desktop && npx tauri build --bundles nsis
 
+      - name: Diagnose koffi staging (temporary)
+        if: runner.os == 'macOS'
+        run: |
+          cd desktop
+          echo "=== host ==="
+          uname -m
+          node -p "'node arch: ' + process.platform + '-' + process.arch"
+          node -e "const os=require('os'); console.log('os.arch:', os.arch(), 'os.platform:', os.platform())"
+          pnpm --version
+          node scripts/fetch-dsh.cjs
+          echo "=== staged @koromix ==="
+          ls -la .dsh-build/dist/node_modules/@koromix/ 2>/dev/null || echo "no @koromix dir"
+          echo "=== koffi .node files ==="
+          find .dsh-build/dist/node_modules -path "*koffi*" -name "*.node" 2>/dev/null | head
+          echo "=== diagnose done ==="
+
       - name: Build Tauri app (macOS .app bundle)
         if: runner.os == 'macOS'
         # dmg is NOT built here — tauri's bundler drives Finder via
