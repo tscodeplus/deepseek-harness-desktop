@@ -59,12 +59,6 @@
     ].join('\n');
     (document.head || document.documentElement).appendChild(style);
 
-    // The strip takes the theme background itself. The --dsw-* tokens are
-    // defined on <body> (light) and <body data-ds-dark-theme> (dark), and
-    // CSS custom properties only inherit DOWNWARD — an html-level lookup
-    // can never see them. The caption is a body child, so var() resolves
-    // from body's scope and follows light/dark correctly.
-    caption.style.background = 'var(--dsw-alias-bg-base,#f9fafb)';
     // Push the app frame below the strip. dsh's base.css pins
     // html/body/#root heights to 100%; inline styles win over stylesheets.
     document.body.style.marginTop = CAPTION_H + 'px';
@@ -87,6 +81,12 @@
     var caption = document.createElement('div');
     caption.id = 'dshd-caption';
     caption.setAttribute('data-tauri-drag-region', 'deep');
+    // The strip takes the theme background itself. The --dsw-* tokens are
+    // defined on <body> (light) and <body data-ds-dark-theme> (dark), and
+    // CSS custom properties only inherit DOWNWARD — an html-level lookup
+    // can never see them. The caption is a body child, so var() resolves
+    // from body's scope and follows light/dark correctly.
+    caption.style.background = 'var(--dsw-alias-bg-base,#f9fafb)';
 
     var buttons = document.createElement('div');
     buttons.id = 'dshd-caption-buttons';
