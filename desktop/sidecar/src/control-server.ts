@@ -330,7 +330,19 @@ const MISSED_HEARTBEAT_LIMIT = 3;
 
 let heartbeatTimer: NodeJS.Timeout | null = null;
 
-export function startHeartbeat(ctlPort: number, token: string, controlPort?: number): void {
+/**
+ * @param onShellLost Invoked once the heartbeat limit is reached. The caller
+ *   must tear down the dsh child (graceful SIGTERM → SIGKILL) BEFORE exiting —
+ *   dsh is a separate process, so a bare `process.exit()` here would orphan it
+ *   and leave port 3080 occupied (OhMyAgent could exit in place because its
+ *   gateway ran in-process).
+ */
+export function startHeartbeat(
+  ctlPort: number,
+  token: string,
+  controlPort?: number,
+  onShellLost?: () => void,
+): void {
   const url = `http://127.0.0.1:${ctlPort}/ping`;
   let missed = 0;
 
@@ -357,7 +369,11 @@ export function startHeartbeat(ctlPort: number, token: string, controlPort?: num
     }
     if (missed >= MISSED_HEARTBEAT_LIMIT) {
       console.error(`[sidecar] heartbeat failed ${missed} times — shell unreachable, exiting`);
-      process.exit(0);
+      if (onShellLost) {
+        onShellLost();
+      } else {
+        process.exit(0);
+      }
     }
   };
 

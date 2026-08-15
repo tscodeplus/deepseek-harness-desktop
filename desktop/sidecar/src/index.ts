@@ -89,7 +89,12 @@ const controlServer = createControlServer({
 // shift (race / TIME_WAIT), and the shell must track the live one.
 const ctlPort = Number(process.env.DSHD_DESKTOP_CONTROL_PORT ?? 0);
 if (ctlPort > 0) {
-  startHeartbeat(ctlPort, controlToken, controlPort);
+  // Anti-orphan exit MUST kill the dsh child first (see control-server.ts
+  // startHeartbeat docs) — otherwise a hard-killed shell leaves dsh holding
+  // port 3080 forever (macOS/Linux have no Windows kill-on-close job object).
+  startHeartbeat(ctlPort, controlToken, controlPort, () => {
+    void stopDsh('shell-unreachable');
+  });
 }
 
 console.log(`[sidecar] dsh web on 127.0.0.1:${dshPort} (control api :${controlPort})`);

@@ -276,12 +276,30 @@ jobs:
               if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
                 echo "dsh web OK on :3080"
                 kill "$app_pid" 2>/dev/null || true
-                sleep 2
                 # The shell's exit must take the sidecar + dsh down with it.
-                if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
+                # On macOS/Linux the cleanup is heartbeat-driven: the sidecar
+                # self-exits after 3 missed 3s heartbeats and THEN kills dsh
+                # (~12s worst case), so poll for the port to close instead of
+                # a fixed 2s wait (which falsely flags a healthy shutdown as
+                # an orphan and EADDRINUSE-fails the retry).
+                local down=false
+                for i in $(seq 1 15); do
+                  if ! curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
+                    down=true
+                    break
+                  fi
+                  sleep 2
+                done
+                if [ "$down" != "true" ]; then
                   echo "FAIL: dsh still running after app exit (orphan)"
+                  # Clean up before the next attempt so the retry doesn't hit
+                  # EADDRINUSE from the leftover dsh.
+                  pkill -f "$BIN" 2>/dev/null || true
+                  pkill -f "$APP/Contents/Resources/sidecar" 2>/dev/null || true
+                  sleep 3
                   return 1
                 fi
+                echo "dsh down after app exit (orphan cleanup OK)"
                 return 0
               fi
               sleep 2
