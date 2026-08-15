@@ -169,6 +169,19 @@ jobs:
       # beforeBuildCommand runs fetch:dsh (fast-paths when the closure is
       # cached) → bundle-deps → build:sidecar; DSHD_TARGET_PLATFORM above
       # keeps the native-module pruning aligned with this job's target.
+      - name: Clean stale NSIS installers (cached target dir)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The cargo/tauri target cache restores the whole bundle dir, so
+          # stale installers from previous versions survive. Wipe the nsis
+          # dir BEFORE tauri build — otherwise old Setup-<version>.exe files
+          # get globbed into the release and latest.yml.
+          $nsisDir = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle/nsis"
+          if (Test-Path $nsisDir) {
+            Get-ChildItem $nsisDir -Filter "*.exe" | Remove-Item -Force
+          }
+
       - name: Build Tauri app (NSIS installer)
         if: runner.os == 'Windows'
         timeout-minutes: 90
@@ -191,11 +204,6 @@ jobs:
         run: |
           $VERSION = node -p "require('./desktop/package.json').version"
           $nsisDir = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle/nsis"
-          # The cargo/tauri target cache restores the whole bundle dir, so
-          # stale installers from previous versions survive tauri build.
-          # Remove every *.exe first — the glob upload below would otherwise
-          # ship old Setup-<previous-version>.exe files to the release.
-          Get-ChildItem $nsisDir -Filter "*.exe" | Remove-Item -Force
           $exe = Get-ChildItem (Join-Path $nsisDir "DeepSeek Harness_*_x64-setup.exe") | Select-Object -First 1
           if (-not $exe) { throw "NSIS installer not found in $nsisDir" }
           Move-Item -Force $exe.FullName (Join-Path $nsisDir "DeepSeek-Harness-Desktop-Setup-$VERSION.exe")
