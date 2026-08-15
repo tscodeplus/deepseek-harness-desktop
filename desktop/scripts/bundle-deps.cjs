@@ -33,8 +33,10 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // staging (v2: workspace members added; v3: rolldown skip + node-pty
 // prebuild pruning + leaner dsh runtime closure; v4: keep node-pty build/
 // for Linux node-gyp fallback; v5: prune the dependency subtree of skipped
-// dev-only packages so jsdom/vitest/istanbul chains never reach staging).
-const BUNDLE_DEPS_VERSION = 5;
+// dev-only packages so jsdom/vitest/istanbul chains never reach staging;
+// v6: keep @img/sharp-libvips-<os>-<arch> on macOS/Linux (sharp 0.35+ loads
+// libvips from the separate package; pruned only on Windows).
+const BUNDLE_DEPS_VERSION = 6;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -252,7 +254,17 @@ function isWrongPlatformBinary(pkgName) {
   if (pkgName.startsWith('@img/sharp-') || pkgName.startsWith('@img/sharp-libvips-')) {
     if (pkgName === '@img/colour') return false;
     const keepPrefix = `@img/sharp-${TARGET_OS}-${TARGET_ARCH}`;
-    if (!pkgName.startsWith(keepPrefix)) return true;
+    if (pkgName.startsWith(keepPrefix)) return false;
+    // sharp 0.35+ loads libvips via @rpath from the separate
+    // @img/sharp-libvips-<os>-<arch> package on macOS/Linux — pruning it
+    // breaks dsh startup there (ERR_DLOPEN_FAILED: libvips-cpp dylib not
+    // found). Windows bundles the DLLs inside @img/sharp-win32-x64, so the
+    // duplicate libvips package stays pruned (keeps the installer small).
+    if (TARGET_OS !== 'win32') {
+      const libvipsPrefix = `@img/sharp-libvips-${TARGET_OS}-${TARGET_ARCH}`;
+      if (pkgName.startsWith(libvipsPrefix)) return false;
+    }
+    return true;
   }
 
   // @node-rs/jieba-*: Chinese text segmentation with per-platform native binaries.
