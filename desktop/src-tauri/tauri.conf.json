@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev:sidecar",
     "devUrl": "http://127.0.0.1:3080",
-    "beforeBuildCommand": "pnpm fetch:dsh && pnpm fetch-node && pnpm bundle-deps && pnpm build:sidecar",
+    "beforeBuildCommand": "pnpm fetch:dsh && node scripts/fetch-node.cjs && pnpm bundle-deps && pnpm build:sidecar",
     "frontendDist": "../../ui"
   },
   "app": {
