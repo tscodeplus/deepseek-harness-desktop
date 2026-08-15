@@ -91,6 +91,8 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
 
       - name: Install Node (matches bundled runtime)
         uses: actions/setup-node@v5
