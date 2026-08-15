@@ -4,6 +4,7 @@
   "description": "DeepSeek Harness Desktop — Tauri 2 shell + Node sidecar for the dsh agent harness",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "fetch:dsh": "node scripts/fetch-dsh.cjs",
     "dev:sidecar": "node scripts/dev-sidecar.cjs",
