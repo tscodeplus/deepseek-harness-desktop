@@ -239,37 +239,88 @@ jobs:
         run: |
           APP="desktop/src-tauri/target/release/bundle/macos/DeepSeek Harness.app"
           BIN="$APP/Contents/MacOS/dsh-desktop"
+          LOG_DIR="$HOME/Library/Application Support/DeepSeek Harness/logs"
           ls -la "$APP/Contents/MacOS/" || true
           file "$BIN" || true
-          "$BIN" > /tmp/dsh-smoke.log 2>&1 &
-          APP_PID=$!
-          sleep 5
-          if ! kill -0 "$APP_PID" 2>/dev/null; then
-            echo "WARN: app exited within 5s"
-            tail -20 /tmp/dsh-smoke.log
-          fi
-          # First launch initializes DSH_HOME (profiles/storages) and loads
-          # cordis plugins; on cold runners this can take well over 2 min.
-          for i in $(seq 1 120); do
-            if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
-              echo "dsh web OK on :3080"
-              kill $APP_PID 2>/dev/null || true
-              sleep 2
-              # The shell's exit must take the sidecar + dsh down with it.
-              if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
-                echo "FAIL: dsh still running after app exit (orphan)"
-                exit 1
-              fi
-              exit 0
+
+          dump_diagnostics() {
+            echo "--- app stdout/stderr (/tmp/dsh-smoke.log) ---"
+            tail -40 /tmp/dsh-smoke.log 2>/dev/null || true
+            echo "--- sidecar.log ---"
+            tail -60 "$LOG_DIR/sidecar.log" 2>/dev/null || echo "(no sidecar.log)"
+            echo "--- shell.log ---"
+            tail -40 "$LOG_DIR/shell.log" 2>/dev/null || echo "(no shell.log)"
+            echo "--- packaged resources ---"
+            ls -la "$APP/Contents/Resources/sidecar/" 2>/dev/null | head -10 || true
+            ls -la "$APP/Contents/Resources/dsh-dist/apps/cli/lib/" 2>/dev/null | head -10 || true
+            echo "--- port 3080 listeners ---"
+            lsof -nP -iTCP:3080 -sTCP:LISTEN 2>/dev/null || echo "(nothing on 3080)"
+            echo "--- process snapshot ---"
+            ps -Ao pid,ppid,stat,etime,command | grep -iE "dsh|node" | grep -v grep | head -15 || true
+          }
+
+          attempt() {
+            local label="$1"
+            echo "== smoke attempt $label =="
+            "$BIN" > /tmp/dsh-smoke.log 2>&1 &
+            local app_pid=$!
+            sleep 5
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              echo "WARN: app exited within 5s"
+              dump_diagnostics
+              return 1
             fi
+            # First launch initializes DSH_HOME (profiles/storages) and loads
+            # cordis plugins; on cold runners this can take well over 2 min.
+            for i in $(seq 1 120); do
+              if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
+                echo "dsh web OK on :3080"
+                kill "$app_pid" 2>/dev/null || true
+                sleep 2
+                # The shell's exit must take the sidecar + dsh down with it.
+                if curl -sf -m 2 -o /dev/null http://127.0.0.1:3080/; then
+                  echo "FAIL: dsh still running after app exit (orphan)"
+                  return 1
+                fi
+                return 0
+              fi
+              sleep 2
+            done
+            echo "health check failed (attempt $label):"
+            dump_diagnostics
+            # Clean up before the next attempt.
+            kill "$app_pid" 2>/dev/null || true
+            sleep 3
+            pkill -f "$BIN" 2>/dev/null || true
+            pkill -f "$APP/Contents/Resources/sidecar" 2>/dev/null || true
             sleep 2
-          done
-          echo "health check failed; app log:"
-          tail -40 /tmp/dsh-smoke.log
-          echo "--- process snapshot ---"
-          ps aux | grep -iE "dsh|node" | grep -v grep | head -10 || true
-          kill $APP_PID 2>/dev/null || true
-          exit 1
+            return 1
+          }
+
+          if attempt "1/2"; then
+            exit 0
+          fi
+          echo "== first attempt failed; retrying once =="
+          attempt "2/2"
+
+      # Smoke failures on cold arm64 runners have been flaky (dsh web never
+      # appears even though sidecar stays alive). Capture the shell/sidecar
+      # logs as artifacts so a genuine packaging break is diagnosable.
+      - name: Collect smoke logs (macOS, always)
+        if: runner.os == 'macOS' && always()
+        continue-on-error: true
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/smoke-logs"
+          cp -R "$HOME/Library/Application Support/DeepSeek Harness/logs/." "$GITHUB_WORKSPACE/smoke-logs/" 2>/dev/null || true
+
+      - name: Upload smoke logs artifact (macOS, always)
+        if: runner.os == 'macOS' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-logs-${{ matrix.bundle_platform }}
+          path: smoke-logs
+          if-no-files-found: warn
 
       - name: Upload artifacts (Windows)
         if: runner.os == 'Windows'
