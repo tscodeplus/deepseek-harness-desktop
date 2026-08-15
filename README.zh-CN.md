@@ -3,8 +3,8 @@
 > 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 构建的社区桌面版本 —— **本项目是基于 DeepSeek Harness 构建的社区桌面版本，并非 DeepSeek 官方产品。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/OWNER/REPO)](https://github.com/OWNER/REPO/releases)
-[![Desktop Release](https://img.shields.io/github/actions/workflow/status/OWNER/REPO/desktop-release.yml?label=release%20builds)](https://github.com/OWNER/REPO/actions/workflows/desktop-release.yml)
+[![Release](https://img.shields.io/github/v/release/tscodeplus/deepseek-harness-desktop)](https://github.com/tscodeplus/deepseek-harness-desktop/releases)
+[![Desktop Release](https://img.shields.io/github/actions/workflow/status/tscodeplus/deepseek-harness-desktop/desktop-release.yml?label=release%20builds)](https://github.com/tscodeplus/deepseek-harness-desktop/actions/workflows/desktop-release.yml)
 
 [English](README.md) · **中文**
 
@@ -56,7 +56,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/OWNER/REPO/releases) 页面下载最新安装包：
+从 [Releases](https://github.com/tscodeplus/deepseek-harness-desktop/releases) 页面下载最新安装包：
 
 | 平台 | 安装包 |
 |---|---|

@@ -3,8 +3,8 @@
 > A community desktop build of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — **this project is a community desktop version built on DeepSeek Harness, not an official DeepSeek product.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/OWNER/REPO)](https://github.com/OWNER/REPO/releases)
-[![Desktop Release](https://img.shields.io/github/actions/workflow/status/OWNER/REPO/desktop-release.yml?label=release%20builds)](https://github.com/OWNER/REPO/actions/workflows/desktop-release.yml)
+[![Release](https://img.shields.io/github/v/release/tscodeplus/deepseek-harness-desktop)](https://github.com/tscodeplus/deepseek-harness-desktop/releases)
+[![Desktop Release](https://img.shields.io/github/actions/workflow/status/tscodeplus/deepseek-harness-desktop/desktop-release.yml?label=release%20builds)](https://github.com/tscodeplus/deepseek-harness-desktop/actions/workflows/desktop-release.yml)
 
 **English** · [中文](README.zh-CN.md)
 
@@ -56,7 +56,7 @@ Key decisions:
 
 ## Installation
 
-Download the latest installer from the [Releases](https://github.com/OWNER/REPO/releases) page:
+Download the latest installer from the [Releases](https://github.com/tscodeplus/deepseek-harness-desktop/releases) page:
 
 | Platform | Artifact |
 |---|---|
