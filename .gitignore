@@ -16,6 +16,9 @@ desktop-config.json
 # Local design docs — kept out of the repository on purpose.
 Mydocs/
 
+# Local agent instructions — kept out of the repository on purpose.
+AGENTS.md
+
 # OS / editor
 .DS_Store
 Thumbs.db
