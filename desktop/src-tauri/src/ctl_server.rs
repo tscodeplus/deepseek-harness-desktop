@@ -9,6 +9,10 @@
 //!   POST /restart-service — ask the shell to restart the sidecar
 //!   POST /quit-app        — exit the shell
 //!   POST /restart-app     — relaunch the shell
+//!   POST /_desktop/boot-settled — WebUI boot chain settled inside the
+//!                                 hidden main window (token via header or
+//!                                 ?token= query — the no-cors fetch from
+//!                                 boot-watch.js cannot set a header)
 //!   GET  /pages/:page     — embedded shell pages (splash.html, error.html;
 //!                           no auth — they are loaded by the shell's own
 //!                           webview windows)
@@ -108,15 +112,31 @@ pub fn start(app: AppHandle, token: String) -> u16 {
             // Shell pages (splash / error) are loaded by our own webview
             // windows, which cannot send an Authorization header on
             // navigation — exempt GET /pages/* from the token check.
+            let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
             let is_page = method == tiny_http::Method::Get
-                && url.split('?').next().unwrap_or("").starts_with("/pages/");
-            let authorized = request
+                && path.starts_with("/pages/");
+            let header_authorized = request
                 .headers()
                 .iter()
                 .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case("authorization"))
                 .map(|h| h.value.as_str().trim().to_string())
                 .map(|v| v == format!("Bearer {token}"))
                 .unwrap_or(false);
+            // The WebUI's boot-watch init script runs on the dsh origin
+            // (127.0.0.1:<server_port>) and signals boot-settled with a
+            // no-cors POST — no preflight, and no-cors forbids setting an
+            // Authorization header, so THIS endpoint also accepts the token
+            // as a query parameter (same pattern as the sidecar control
+            // API's EventSource ?token=). No other route gets the fallback.
+            let query_authorized = path == "/_desktop/boot-settled"
+                && query.split('&').any(|kv| {
+                    let mut it = kv.splitn(2, '=');
+                    matches!(
+                        (it.next(), it.next()),
+                        (Some("token"), Some(t)) if t == token
+                    )
+                });
+            let authorized = header_authorized || query_authorized;
 
             if !is_page && !authorized {
                 let _ = request.respond(
@@ -180,6 +200,18 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
         // down — which is exactly when the error window appears.
         "/pages/splash.html" => html(include_str!("../pages/splash.html")),
         "/pages/error.html" => html(include_str!("../pages/error.html")),
+        "/_desktop/boot-settled" => {
+            // The WebUI's boot chain settled (or failed loudly) inside the
+            // hidden main window — swap splash → real UI now, so the user
+            // only ever sees one loading screen (the shell splash). Sent by
+            // boot-watch.js; the fail-safe watchdog lives in windows.rs
+            // (arm_boot_watchdog).
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                crate::windows::show_main_window(&app2);
+            });
+            ok("revealed")
+        }
         "/ping" => {
             // Keep the shell's view of the control API port in sync: the
             // sidecar may have re-bound elsewhere (reserved-port race).

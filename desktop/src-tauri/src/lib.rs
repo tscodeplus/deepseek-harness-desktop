@@ -23,10 +23,15 @@ mod windows;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Focus the main window on second-instance launch.
+            // Focus the main window on second-instance launch. During the
+            // first boot the main window exists but is intentionally hidden
+            // behind the splash (single-splash gate) — a second instance
+            // must not reveal it early.
             if let Some(win) = app.get_webview_window(windows::MAIN_LABEL) {
-                let _ = win.show();
-                let _ = win.set_focus();
+                if app.get_webview_window(windows::SPLASH_LABEL).is_none() {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -66,12 +71,12 @@ pub fn run() {
             // main window is NOT created here — it is built lazily by
             // reveal_main_window once the sidecar answers /api/health, so its
             // first navigation never hits a not-yet-listening server.
-            // Splash is behind windows::SPLASH_ENABLED (temporarily off —
-            // it duplicates the WebUI's own boot loading page).
+            // Single-splash UX: the shell splash (deepseek.com/harness
+            // branding) stays up until the WebUI's own boot chain settles
+            // inside the hidden main window — see windows.rs
+            // reveal_main_window / boot-watch.js.
             let _ = tray::create_tray(&handle, &cfg);
-            if windows::SPLASH_ENABLED {
-                let _ = windows::create_splash(&handle);
-            }
+            let _ = windows::create_splash(&handle);
 
             tauri::async_runtime::spawn(async move {
                 sidecar::init(&handle).await;

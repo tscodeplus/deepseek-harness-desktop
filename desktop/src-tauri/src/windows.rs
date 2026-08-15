@@ -16,11 +16,12 @@ pub const SPLASH_LABEL: &str = "splash";
 pub const ERROR_LABEL: &str = "error";
 pub const PROGRESS_LABEL: &str = "updater-progress";
 
-/// Temporary kill-switch for the splash window (2026-08-15): the splash
-/// duplicates the WebUI's own boot loading page (HARNESS wordmark + spinner),
-/// so it is disabled while we evaluate the redundancy. The page and window
-/// code stay in place — flip this back to re-enable.
-pub const SPLASH_ENABLED: bool = false;
+/// How long the shell waits for the WebUI's own boot chain to settle (the
+/// boot-watch init script normally signals in a couple of seconds) before
+/// revealing the main window anyway. Fail-safe only: a hidden-webview stall,
+/// a future dsh change that breaks detection, or a lost boot-settled POST
+/// must never leave the user stuck on the splash forever.
+const BOOT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Shell-owned pages (splash / error) are served by the shell's own control
 /// service (ctl_server.rs) — they must render even when the sidecar or the
@@ -52,10 +53,12 @@ pub fn webui_url(app: &AppHandle, cache_bust: bool) -> String {
 }
 
 /// Main window — built in code (not tauri.conf.json). Hidden until the dsh
-/// web server is ready; the window is *created lazily* once the sidecar
-/// health poll succeeds (reveal_main_window) so the WebView's first
-/// navigation never hits a not-yet-listening server (an early load would
-/// leave the webview stuck on the ERR_CONNECTION_REFUSED error page).
+/// web server is ready AND the WebUI's own boot chain has settled: the
+/// window is *created lazily* once the sidecar health poll succeeds
+/// (reveal_main_window) so the WebView's first navigation never hits a
+/// not-yet-listening server (an early load would leave the webview stuck on
+/// the ERR_CONNECTION_REFUSED error page), and it stays hidden behind the
+/// shell splash until boot-watch.js signals boot-settled (single-splash UX).
 ///
 /// Immersive shell (mirrors the Electron frameless + titleBarOverlay look
 /// used by OhMyAgent and anywhere-labs/deepseek-harness-desktop): no native
@@ -95,6 +98,24 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
             .decorations(false)
             .initialization_script(include_str!("../caption.js"));
     }
+    // Single-splash gate (all platforms): the window is created HIDDEN while
+    // the WebUI runs its own boot chain, so its duplicate boot loading page
+    // is never visible. boot-watch.js watches that page and POSTs
+    // /_desktop/boot-settled to the shell control service once the boot
+    // settled (or failed loudly); only then does the shell swap splash →
+    // main window (see reveal_main_window / show_main_window). The config
+    // rides in as a JSON init script — plain fetch to the ctl server, no
+    // Tauri IPC / capability change needed on the remote 127.0.0.1 origin.
+    let boot_watch_cfg = format!(
+        "window.__DSHD_BOOT_WATCH__ = {};",
+        serde_json::json!({
+            "ctlPort": crate::ctl_server::port(),
+            "token": crate::ctl_server::token().unwrap_or_default(),
+        })
+    );
+    builder = builder
+        .initialization_script(boot_watch_cfg)
+        .initialization_script(include_str!("../boot-watch.js"));
     builder.build()?;
     Ok(())
 }
@@ -111,9 +132,12 @@ fn window_icon() -> tauri::image::Image<'static> {
         .expect("128x128.png embedded")
 }
 
-/// Splash shown while the sidecar boots dsh. Same look as the upstream boot
-/// loading page (HARNESS wordmark + blue ring spinner on a light background,
-/// see pages/splash.html).
+/// Splash shown while the sidecar boots dsh AND while the WebUI's own boot
+/// chain settles inside the hidden main window. Branding mirrors the
+/// top-left corner of https://www.deepseek.com/harness/ (dark): DeepSeek
+/// wordmark + raised "Harness" pill on the page's dark background — see
+/// pages/splash.html for the exact tokens and the platform split (Windows
+/// shadow off, macOS native shadow).
 ///
 /// Created hidden and shown on page-load-Finished: a visible window before the
 /// webview paints shows the default white background for a frame (the
@@ -123,15 +147,11 @@ pub fn create_splash(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(SPLASH_LABEL).is_some() {
         return Ok(());
     }
-    // Same look as the upstream boot loading page
-    // (packages/client/web/src/AppRoot.tsx): light background, "HARNESS"
-    // wordmark, blue ring spinner, rounded corners.
     // The page is a static resource (pages/splash.html) loaded over the App
     // URL — data: URLs are unreliable on WKWebView (charset detection, and
     // plain-text rendering of the payload — wry dropped native data: URL
-    // support in 0.37). The label is localized in-page from
-    // navigator.language.
-    WebviewWindowBuilder::new(app, SPLASH_LABEL, shell_page_url("splash.html"))
+    // support in 0.37).
+    let builder = WebviewWindowBuilder::new(app, SPLASH_LABEL, shell_page_url("splash.html"))
         .title("DeepSeek Harness")
         .inner_size(340.0, 240.0)
         .resizable(false)
@@ -140,7 +160,14 @@ pub fn create_splash(app: &AppHandle) -> tauri::Result<()> {
         .always_on_top(true)
         .skip_taskbar(true)
         .center()
-        .visible(false)
+        .visible(false);
+    // Tauri/tao enables the undecorated-window shadow by default; on Windows
+    // DWM paints that shadow as a subtle gray border around the transparent
+    // splash. macOS keeps its native NSWindow shadow, which renders cleanly —
+    // only Windows opts out.
+    #[cfg(windows)]
+    let builder = builder.shadow(false);
+    builder
         .on_page_load(|win, payload| {
             if matches!(payload.event(), PageLoadEvent::Finished) {
                 let _ = win.show();
@@ -165,9 +192,13 @@ pub fn create_splash(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Reveal the main window once the sidecar answers /api/health. The window is
+/// Handle the main window once the sidecar answers /api/health. The window is
 /// created lazily on first reveal (never at shell setup — see
-/// create_main_window) so the first navigation lands on a live server.
+/// create_main_window) so the first navigation lands on a live server. On
+/// the first launch the window is created HIDDEN and only shown once the
+/// WebUI boot chain settles (boot-watch.js → /_desktop/boot-settled →
+/// show_main_window, with a watchdog fail-safe); on restart flows the
+/// existing window is navigated and shown as before.
 ///
 /// Creating a window requires the main thread; the show/focus half is
 /// thread-safe and runs inline for the already-created case (restart flows).
@@ -177,9 +208,25 @@ pub fn reveal_main_window(app: &AppHandle) {
         let _ = app.run_on_main_thread(move || {
             if let Err(e) = create_main_window(&app2) {
                 log::error!("windows: create_main_window failed: {e}");
+                // The splash is the only thing on screen — a WebUI window
+                // that cannot be created must not leave the user staring at
+                // the splash forever.
+                close_splash(&app2);
+                let zh = crate::i18n::is_zh(&app2);
+                let msg = crate::i18n::tr(
+                    "窗口创建失败，请重启应用。",
+                    "Failed to create the main window. Please restart the app.",
+                    zh,
+                );
+                let _ = show_error_window(&app2, &msg);
                 return;
             }
-            show_main_window(&app2);
+            // First launch: the window stays HIDDEN until the WebUI's boot
+            // chain settles inside it (boot-watch.js → /_desktop/boot-settled
+            // → show_main_window). The splash stays up meanwhile, so the
+            // user only ever sees one loading screen — never the WebUI's
+            // duplicate boot page. arm_boot_watchdog is the fail-safe.
+            arm_boot_watchdog(&app2);
         });
         return;
     }
@@ -208,10 +255,27 @@ pub fn reveal_main_window(app: &AppHandle) {
     show_main_window(app);
 }
 
+/// Fail-safe for the first-show boot gate: reveal the main window once the
+/// splash has been up past BOOT_SETTLE_TIMEOUT without a boot-settled
+/// signal. No-ops when the splash is already gone — that means either the
+/// settled path ran (show_main_window closes it) or a crash / startup-timeout
+/// path closed it and showed the error window; forcing the main window there
+/// would surface a dead page over the error UI.
+fn arm_boot_watchdog(app: &AppHandle) {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(BOOT_SETTLE_TIMEOUT).await;
+        if app2.get_webview_window(SPLASH_LABEL).is_some() {
+            log::warn!("windows: WebUI boot settle timed out — revealing main window anyway");
+            show_main_window(&app2);
+        }
+    });
+}
+
 /// Show + maximize + focus the main window, apply the current theme chrome
 /// (DWM caption colors, background — needed on the freshly created window
 /// since setup's apply_theme ran before it existed), then close the splash.
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(MAIN_LABEL) {
         let cfg = DesktopConfig::load(&config_path(app));
         let _ = apply_theme(app, &cfg.theme);

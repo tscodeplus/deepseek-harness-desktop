@@ -214,6 +214,11 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 
 fn toggle_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(crate::windows::MAIN_LABEL) {
+        // During the first boot the main window is intentionally hidden
+        // behind the splash (single-splash gate) — don't reveal it early.
+        if app.get_webview_window(crate::windows::SPLASH_LABEL).is_some() {
+            return;
+        }
         if let Ok(visible) = win.is_visible() {
             if visible {
                 let _ = win.hide();
