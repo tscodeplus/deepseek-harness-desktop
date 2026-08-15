@@ -389,8 +389,9 @@ jobs:
             echo "missing dmg: x64='$DMG_X64' arm64='$DMG_ARM64'"
             exit 1
           fi
+          # release-meta.cjs writes the yml NEXT TO THE FIRST installer
+          # (mac-x64/latest-mac.yml) — no mv needed.
           node desktop/scripts/release-meta.cjs "$DMG_X64" "$DMG_ARM64" "$VERSION" latest-mac.yml
-          mv latest-mac.yml mac-x64/
 
       - name: Upload merged latest-mac.yml
         uses: actions/upload-artifact@v6
