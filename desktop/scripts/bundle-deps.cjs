@@ -35,8 +35,12 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // for Linux node-gyp fallback; v5: prune the dependency subtree of skipped
 // dev-only packages so jsdom/vitest/istanbul chains never reach staging;
 // v6: keep @img/sharp-libvips-<os>-<arch> on macOS/Linux (sharp 0.35+ loads
-// libvips from the separate package; pruned only on Windows).
-const BUNDLE_DEPS_VERSION = 6;
+// libvips from the separate package; pruned only on Windows);
+// v7: prune the dsh demo/examples umbrella + optional external subagent
+// backends (claude-code / codex / acp / dsh-sdk) and their dependency
+// subtrees — mirrors OhMyAgent/Electron desktop runtimes; the claude-agent-sdk
+// chain alone is ~260 MB (per-platform native CLI binary).
+const BUNDLE_DEPS_VERSION = 7;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -170,6 +174,30 @@ const SKIP_PACKAGES = new Set([
   // Build-time C++ headers — required for node-gyp compilation only.
   // Not needed at runtime once native modules are compiled.
   'node-addon-api',
+  // dsh demo/example packages — dev content, never part of the runtime
+  // plugin tree. dsh-examples is an umbrella that also pulls the external
+  // subagent backends below (see the claude-agent-sdk note).
+  'dsh-examples',
+  'dsh-jsonrpc-agent-pkg', // JSON-RPC spine demo deploy root (dep-only manifest)
+  '@deepseek-ai/dsh-acp-demo',
+  '@deepseek-ai/dsh-agent-spine-demo',
+  '@deepseek-ai/dsh-sdk-jsonrpc-demo',
+  // Optional external subagent backends (claude-code / codex / acp / dsh-sdk).
+  // The dsh web plugin tree only LAZILY loads them when the user picks that
+  // backend; the in-process/spawn drivers are the bundled defaults. The
+  // Electron desktop release ships without all of these and boots fine.
+  '@deepseek-ai/dsh-subagent-acp',
+  '@deepseek-ai/dsh-subagent-claude-code',
+  '@deepseek-ai/dsh-subagent-codex',
+  '@deepseek-ai/dsh-subagent-dsh-sdk',
+  // @anthropic-ai/claude-agent-sdk: the claude-code backend dependency.
+  // Its per-platform native package (@anthropic-ai/claude-agent-sdk-<os>-<arch>)
+  // ships a ~260 MB CLI binary — the single largest item in the bundle.
+  '@anthropic-ai/claude-agent-sdk',
+  '@anthropic-ai/claude-agent-sdk-darwin-x64',
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64',
+  '@anthropic-ai/claude-agent-sdk-win32-x64',
+  '@anthropic-ai/claude-agent-sdk-linux-x64',
 ]);
 
 /** Dev-only packages that must never land in the production bundle. */
@@ -491,7 +519,14 @@ function collectPnpmDeps(projectDir) {
           version: item.version || 'unknown',
         });
       }
-      if (item.dependencies) walk(item.dependencies);
+      // Do NOT descend into dev-only workspace members' dependencies: the
+      // umbrella/example packages above register real dependencies (e.g.
+      // dsh-examples → dsh-subagent-claude-code → @anthropic-ai/claude-agent-sdk)
+      // that must never reach staging, even though the items themselves are
+      // skipped by copyPnpmPkg. Mirror the recursion guard used in walk().
+      if (item.dependencies && !isDevOnlyPackage(item.name)) {
+        walk(item.dependencies);
+      }
     }
   }
 
