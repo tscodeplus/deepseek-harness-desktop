@@ -36,6 +36,13 @@ const MANIFEST_FILE = path.join(BUILD_DIR, 'dsh.manifest.json');
 // The entry the sidecar spawns in prod (sidecar/src/index.ts).
 const CLI_ENTRY = path.join(DSH_DIR, 'apps', 'cli', 'lib', 'bin.js');
 
+// Target platform for the build closure's native modules. CI overrides via
+// DSHD_TARGET_PLATFORM (e.g. darwin-x64); default win32-x64 (desktop main
+// release). Must stay in sync with bundle-deps.cjs — the closure is NOT
+// portable across platforms (koffi/@koromix ships one platform package per
+// arch), so the fast path below also verifies the platform.
+const TARGET_PLATFORM = process.env.DSHD_TARGET_PLATFORM || 'win32-x64';
+
 function sh(cmd, cwd) {
   console.log(`  $ ${cmd}`);
   execSync(cmd, { cwd, stdio: 'inherit' });
@@ -87,9 +94,13 @@ function main() {
   if (!force) {
     try {
       const manifest = JSON.parse(fs.readFileSync(MANIFEST_FILE, 'utf8'));
-      if (manifest.ref === ref && fs.existsSync(CLI_ENTRY)) {
+      if (
+        manifest.ref === ref &&
+        manifest.platform === TARGET_PLATFORM &&
+        fs.existsSync(CLI_ENTRY)
+      ) {
         console.log(
-          `[fetch-dsh] closure already built for ref ${ref.slice(0, 12)} — skipping ` +
+          `[fetch-dsh] closure already built for ${TARGET_PLATFORM} @ ${ref.slice(0, 12)} — skipping ` +
             '(use --force to rebuild, or delete .dsh-build)',
         );
         return;
@@ -141,6 +152,7 @@ function main() {
 
   const manifest = {
     ref,
+    platform: TARGET_PLATFORM,
     tag: refDoc.tag ?? null,
     mode: refDoc.mode ?? 'commit',
     note: refDoc.note ?? '',
