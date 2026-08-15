@@ -27,12 +27,21 @@ const DESKTOP = path.resolve(__dirname, '..');
 const ROOT = path.join(DESKTOP, '.dsh-build', 'dist');
 const STAGING = path.join(DESKTOP, '.sidecar-deps');
 const STAGING_NM = path.join(STAGING, 'node_modules');
+const DSH_REF_FILE = path.join(DESKTOP, 'dsh-ref.json');
+const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
+// Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
+// buffers cmd output until the command exits) can be tailed for progress.
+const LOG_FILE = path.join(STAGING, 'bundle.log');
 
 // Native .node addons that must be present (and Node-ABI) in the staging tree.
 // dsh's native set: node-pty (PTY/ConPTY), koffi (Windows FFI), sharp
 // (attachments), node-addon-require-builtin (custom loader). All ship plain
 // Node prebuilds (from pnpm install on the build machine) matching the bundled
 // Node runtime major version — no electron-rebuild step.
+// koffi and node-addon-require-builtin ship their binaries in separate
+// per-platform npm packages (@koromix/koffi-<os>-<arch> /
+// node-addon-require-builtin-<os>-<arch>-<libc>), so the verification below
+// resolves those variants too.
 const NATIVE_ADDONS = [
   'node-pty',
   'koffi',
@@ -107,9 +116,29 @@ const SKIP_PACKAGES = new Set([
   'tsc-alias',
   'vite',
   'vitest',
+  // Dev toolchains that leak into `pnpm list --prod` in workspace mode
+  // (pnpm v10/11 does not filter workspace members' devDependencies).
+  'esbuild',
+  'lightningcss',
+  'jsdom',
+  'chai',
+  'postcss',
+  'openapi-typescript-helpers',
+  'vite-tsconfig-paths',
   'tailwindcss',
   '@tailwindcss/vite',
   '@vitejs/plugin-react',
+  '@vitejs/plugin-vue',
+  '@vitest/coverage-v8',
+  '@vitest/expect',
+  '@vitest/mocker',
+  '@vitest/pretty-format',
+  '@vitest/runner',
+  '@vitest/snapshot',
+  '@vitest/spy',
+  '@vitest/utils',
+  '@testing-library/dom',
+  '@testing-library/react',
   'eslint',
   'prettier',
   '@types/node',
@@ -124,6 +153,20 @@ const SKIP_PACKAGES = new Set([
   // Not needed at runtime once native modules are compiled.
   'node-addon-api',
 ]);
+
+/** Dev-only packages that must never land in the production bundle. */
+function isDevOnlyPackage(pkgName) {
+  if (SKIP_PACKAGES.has(pkgName)) return true;
+  // TypeScript type definitions are never needed at runtime.
+  if (pkgName.startsWith('@types/')) return true;
+  // esbuild + its per-platform binary packages are build-time only (pulled
+  // in via vite/vitest/tsx dev chains).
+  if (pkgName === 'esbuild' || pkgName.startsWith('@esbuild/')) return true;
+  // lightningcss + its per-platform binary packages: build-time CSS minifier
+  // (vite dev chain), never imported by the dsh runtime.
+  if (pkgName.startsWith('lightningcss')) return true;
+  return false;
+}
 
 // Package-scoped subpath cuts — subdirectories/files inside a package that
 // are never reachable at runtime. Verified against each package's
@@ -144,6 +187,12 @@ const PACKAGE_SUBPATH_SKIPS = {
 
 function log(msg) {
   process.stdout.write(`  ${msg}\n`);
+  try {
+    fs.mkdirSync(STAGING, { recursive: true });
+    fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${msg}\n`);
+  } catch {
+    /* log file unavailable — stdout only */
+  }
 }
 
 /**
@@ -173,6 +222,44 @@ function isWrongPlatformBinary(pkgName) {
     if (!pkgName.startsWith(keepPrefix)) return true;
   }
 
+  // @koromix/koffi-*: koffi's prebuilt native binary, one package per
+  // platform. Keep only the target platform variant.
+  if (pkgName.startsWith('@koromix/koffi-')) {
+    const keepPrefix = `@koromix/koffi-${TARGET_OS}-${TARGET_ARCH}`;
+    if (!pkgName.startsWith(keepPrefix)) return true;
+  }
+
+  // node-addon-require-builtin-<os>-<arch>[-<libc>]: per-platform native
+  // binary for the custom loader. Windows/Linux add a libc suffix
+  // (win32-x64-msvc, linux-x64-gnu); macOS does not (darwin-arm64 /
+  // darwin-x64). Keep only the target platform variant.
+  if (pkgName.startsWith('node-addon-require-builtin-')) {
+    const keepBase = `node-addon-require-builtin-${TARGET_OS}-${TARGET_ARCH}`;
+    if (pkgName === keepBase) return false;
+    if (pkgName.startsWith(`${keepBase}-`)) return false;
+    return true;
+  }
+
+  // lightningcss-*: Rust-based CSS minifier with per-platform prebuilt
+  // binaries (darwin-arm64 / linux-x64-gnu / win32-x64-msvc ...).
+  if (pkgName.startsWith('lightningcss-')) {
+    const keepPrefix = `lightningcss-${TARGET_OS}-${TARGET_ARCH}`;
+    if (!pkgName.startsWith(keepPrefix)) return true;
+  }
+
+  // @esbuild/<os>-<arch>: esbuild's per-platform binary package.
+  if (pkgName.startsWith('@esbuild/')) {
+    if (pkgName !== `@esbuild/${TARGET_OS}-${TARGET_ARCH}`) return true;
+  }
+
+  // @deepseek-ai/node-addon-landlock-run-<os>-<arch>: Linux-only sandbox
+  // runner (optional native binary of the landlock workspace package).
+  // The main package (without suffix) is the JS loader and is always kept.
+  if (pkgName.startsWith('@deepseek-ai/node-addon-landlock-run-')) {
+    const keepPrefix = `@deepseek-ai/node-addon-landlock-run-${TARGET_OS}-${TARGET_ARCH}`;
+    if (!pkgName.startsWith(keepPrefix)) return true;
+  }
+
   return false;
 }
 
@@ -188,7 +275,7 @@ function shouldSkip(relativePath) {
   return false;
 }
 
-function copyDir(src, dest, basePath) {
+function copyDir(src, dest, basePath, visited = new Set()) {
   // Handle broken symlinks (e.g. optional platform deps not installed)
   let stat;
   try {
@@ -201,7 +288,12 @@ function copyDir(src, dest, basePath) {
     try {
       const realPath = fs.realpathSync(src);
       if (fs.statSync(realPath).isDirectory()) {
-        return copyDir(realPath, dest, basePath);
+        // Symlink cycle guard (defense in depth — see the node_modules skip
+        // below): never recurse into a directory we already visited on this
+        // copy path.
+        if (visited.has(realPath)) return;
+        visited.add(realPath);
+        return copyDir(realPath, dest, basePath, visited);
       }
     } catch {
       // Broken symlink — skip silently
@@ -226,13 +318,27 @@ function copyDir(src, dest, basePath) {
 
     if (shouldSkip(relativePath)) continue;
 
+    if (entry.name === 'node_modules' && (entry.isDirectory() || entry.isSymbolicLink())) {
+      // CRITICAL: never descend into a package's node_modules during
+      // flattening. pnpm fills these with junctions/symlinks to sibling
+      // packages, and in a monorepo workspace (dsh) those links point back
+      // into the workspace source tree — following them copies the whole
+      // repository recursively (exponential blowup that exhausted the disk
+      // on the first Windows bundle run). On Windows pnpm creates these as
+      // junction points, which Node reports as symlinks — so both Dirent
+      // flavors must be skipped. Node.js resolves dependencies from the
+      // flat staging root instead; version conflicts are re-materialized
+      // by fixNestedDeps() afterwards.
+      continue;
+    }
+
     if (entry.isSymbolicLink()) {
       // Follow symlinks: copy the actual content (pnpm style)
       try {
         const realPath = fs.realpathSync(srcPath);
         const stat = fs.statSync(realPath);
         if (stat.isDirectory()) {
-          copyDir(realPath, path.join(dest, entry.name), relativePath);
+          copyDir(realPath, path.join(dest, entry.name), relativePath, visited);
         } else {
           fs.copyFileSync(realPath, path.join(dest, entry.name));
         }
@@ -241,7 +347,7 @@ function copyDir(src, dest, basePath) {
         log(`WARN: skipping symlink ${relativePath}: ${err.message}`);
       }
     } else if (entry.isDirectory()) {
-      copyDir(srcPath, path.join(dest, entry.name), relativePath);
+      copyDir(srcPath, path.join(dest, entry.name), relativePath, visited);
     } else {
       fs.copyFileSync(srcPath, path.join(dest, entry.name));
     }
@@ -340,7 +446,7 @@ function copyPnpmPkg(pkgPath, destBase, isNativeOverride = false) {
   const pkgName = pkgJson.name || path.basename(pkgPath);
 
   // Skip well-known dev-only packages
-  if (SKIP_PACKAGES.has(pkgName)) {
+  if (isDevOnlyPackage(pkgName)) {
     log(`  SKIP ${pkgName}@${pkgJson.version || '?'} (dev-only)`);
     return;
   }
@@ -519,6 +625,37 @@ function main() {
   log('📦 Preparing flat node_modules for the Tauri sidecar...');
   log('');
 
+  // Fast path: staging already flattened for this exact target + dsh ref.
+  // tauri build's beforeBuildCommand re-runs bundle-deps after build.ps1 /
+  // CI already flattened — without this every build re-copies ~900 packages
+  // twice (disk/CPU churn, minutes on Windows). Mirror of fetch-dsh.cjs.
+  let pinnedRef = '';
+  try {
+    pinnedRef = JSON.parse(fs.readFileSync(DSH_REF_FILE, 'utf8')).ref || '';
+  } catch {
+    /* no dsh-ref.json — full flatten below */
+  }
+  try {
+    const manifest = JSON.parse(fs.readFileSync(BUNDLE_MANIFEST_FILE, 'utf8'));
+    const count = fs.existsSync(STAGING_NM)
+      ? fs.readdirSync(STAGING_NM).length
+      : 0;
+    if (
+      manifest.ref === pinnedRef &&
+      manifest.targetPlatform === TARGET_PLATFORM &&
+      count > 100
+    ) {
+      log(
+        `Staging already complete for ${TARGET_PLATFORM} @ ${pinnedRef.slice(0, 12)} ` +
+          `(${count} packages) — skipping flatten (delete .sidecar-deps to force)`,
+      );
+      log('');
+      return;
+    }
+  } catch {
+    /* no manifest — full flatten below */
+  }
+
   // 1. Clean and recreate staging
   // Clear staging subdirs but keep `.sidecar-deps/runtime` (bundled Node
   // runtime, fetched separately — wiping it would force a re-download).
@@ -589,6 +726,26 @@ function main() {
     let searchDirs;
     if (addonName === 'sharp') {
       searchDirs = [path.join(STAGING_NM, '@img', `sharp-${TARGET_OS}-${TARGET_ARCH}`)];
+    } else if (addonName === 'koffi') {
+      // Prebuilt lives in the platform package (@koromix/koffi-<os>-<arch>);
+      // the koffi main package only carries C++ sources + the loader.
+      searchDirs = [
+        path.join(STAGING_NM, '@koromix', `koffi-${TARGET_OS}-${TARGET_ARCH}`),
+        path.join(STAGING_NM, addonName),
+      ];
+    } else if (addonName === 'node-addon-require-builtin') {
+      // Prebuilt lives in node-addon-require-builtin-<os>-<arch>[-<libc>]
+      // (win32-x64-msvc / linux-x64-gnu / darwin-arm64 ...).
+      const keepBase = `node-addon-require-builtin-${TARGET_OS}-${TARGET_ARCH}`;
+      const variantDirs = fs
+        .readdirSync(STAGING_NM, { withFileTypes: true })
+        .filter(
+          (e) =>
+            e.isDirectory() &&
+            (e.name === keepBase || e.name.startsWith(`${keepBase}-`)),
+        )
+        .map((e) => path.join(STAGING_NM, e.name));
+      searchDirs = [...variantDirs, path.join(STAGING_NM, addonName)];
     } else {
       searchDirs = [path.join(STAGING_NM, addonName)];
     }
@@ -610,6 +767,19 @@ function main() {
 
   // 7. Report stats
   const count = fs.readdirSync(STAGING_NM).length;
+  fs.writeFileSync(
+    BUNDLE_MANIFEST_FILE,
+    JSON.stringify(
+      {
+        ref: pinnedRef,
+        targetPlatform: TARGET_PLATFORM,
+        packageCount: count,
+        completedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + '\n',
+  );
   log('');
   log(`✅ Staging complete: ${count} packages in ${STAGING_NM}`);
   log('');

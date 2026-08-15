@@ -10,6 +10,7 @@ node_modules/
 dist/
 coverage/
 *.log
+desktop-config.json
 .env
 
 # Local design docs — kept out of the repository on purpose.
