@@ -1,0 +1,49 @@
+name: CI
+
+# Runs automated checks on every push/PR to master (mirrors OhMyAgent's
+# ci.yml, adapted to this repo where the pnpm project lives in desktop/).
+# The release pipeline is a separate workflow (desktop-release.yml).
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  # Manual trigger: keeps CI runnable without a push.
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Reject focused tests (.only)
+        run: |
+          if grep -rnE '\b(describe|it|test)\.only\(' sidecar/test --include='*.ts'; then
+            echo "::error::Focused tests (.only) must not be committed"
+            exit 1
+          fi
+
+      # Explicit version: matches the packageManager field and the release
+      # workflow (pnpm 11 strict-dep-builds needs the config flag below).
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: desktop/.node-version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+
+      - name: Typecheck (sidecar tsc)
+        run: pnpm build:sidecar
+
+      - name: Test
+        run: pnpm test
