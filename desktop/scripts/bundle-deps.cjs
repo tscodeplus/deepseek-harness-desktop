@@ -32,8 +32,9 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // Bump when the flattening logic changes so the fast path rebuilds stale
 // staging (v2: workspace members added; v3: rolldown skip + node-pty
 // prebuild pruning + leaner dsh runtime closure; v4: keep node-pty build/
-// for Linux node-gyp fallback).
-const BUNDLE_DEPS_VERSION = 4;
+// for Linux node-gyp fallback; v5: prune the dependency subtree of skipped
+// dev-only packages so jsdom/vitest/istanbul chains never reach staging).
+const BUNDLE_DEPS_VERSION = 5;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -445,7 +446,12 @@ function collectPnpmDeps(projectDir) {
           version: info.version || 'unknown',
         });
       }
-      if (info.dependencies) {
+      // Prune the subtree of dev-only packages: skipping the parent (e.g.
+      // jsdom, vitest) used to leave its whole dependency chain (istanbul
+      // reporters, jsdom's css parser, ...) in the flat staging because the
+      // walk still collected them. Only a skipped package's direct path is
+      // registered above — its dependencies are not walked.
+      if (info.dependencies && !isDevOnlyPackage(name)) {
         walk(info.dependencies);
       }
     }

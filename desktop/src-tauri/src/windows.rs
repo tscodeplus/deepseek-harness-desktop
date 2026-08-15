@@ -93,8 +93,11 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
 /// 125%/150% displays. macOS ignores it (no title-bar icon there); the Dock
 /// uses the packaged .icns.
 fn window_icon() -> tauri::image::Image<'static> {
-    tauri::image::Image::from_bytes(include_bytes!("../icons/icon-64.png"))
-        .expect("icon-64.png embedded")
+    // 128px render of the upstream whale SVG (icons/128x128.png, regenerated
+    // via `tauri icon` from assets/icon-source.svg) — the old 64px source
+    // looked soft in the taskbar on 125%/150% displays.
+    tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
+        .expect("128x128.png embedded")
 }
 
 /// Splash shown while the sidecar boots. Same look as the Electron splash.
