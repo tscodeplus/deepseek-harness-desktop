@@ -191,19 +191,21 @@ jobs:
         run: |
           $VERSION = node -p "require('./desktop/package.json').version"
           $nsisDir = Join-Path $env:GITHUB_WORKSPACE "desktop/src-tauri/target/release/bundle/nsis"
+          # The cargo/tauri target cache restores the whole bundle dir, so
+          # stale installers from previous versions survive tauri build.
+          # Remove every *.exe first — the glob upload below would otherwise
+          # ship old Setup-<previous-version>.exe files to the release.
+          Get-ChildItem $nsisDir -Filter "*.exe" | Remove-Item -Force
           $exe = Get-ChildItem (Join-Path $nsisDir "DeepSeek Harness_*_x64-setup.exe") | Select-Object -First 1
           if (-not $exe) { throw "NSIS installer not found in $nsisDir" }
           Move-Item -Force $exe.FullName (Join-Path $nsisDir "DeepSeek-Harness-Desktop-Setup-$VERSION.exe")
-          Get-ChildItem $nsisDir -Filter "DeepSeek Harness*.exe" |
-            Where-Object { $_.Name -ne "DeepSeek-Harness-Desktop-Setup-$VERSION.exe" } |
-            Remove-Item -Force
 
       - name: Generate latest.yml metadata
         if: runner.os == 'Windows'
         run: |
           $VERSION = node -p "require('./desktop/package.json').version"
-          $EXE = Get-ChildItem "desktop/src-tauri/target/release/bundle/nsis/DeepSeek-Harness-Desktop-Setup-*.exe" | Select-Object -First 1
-          node desktop/scripts/release-meta.cjs $EXE.FullName $VERSION
+          $EXE = "desktop/src-tauri/target/release/bundle/nsis/DeepSeek-Harness-Desktop-Setup-$VERSION.exe"
+          node desktop/scripts/release-meta.cjs "$EXE" $VERSION
 
       - name: Package dmg (hdiutil + prebuilt .DS_Store, no AppleScript)
         if: runner.os == 'macOS'
