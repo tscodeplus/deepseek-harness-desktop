@@ -47,7 +47,8 @@
     style.textContent = [
       '#dshd-caption{position:fixed;top:0;left:0;right:0;height:' + CAPTION_H + 'px;' +
         'z-index:2147483647;display:flex;align-items:center;' +
-        'user-select:none;-webkit-user-select:none;color:#7f858f}',
+        'user-select:none;-webkit-user-select:none;' +
+        'color:var(--dsw-alias-label-tertiary,#7f858f)}',
       '#dshd-caption-buttons{height:100%;display:flex;align-items:stretch;margin-left:auto}',
       '#dshd-caption button{width:46px;height:100%;border:0;padding:0;margin:0;' +
         'background:transparent;display:flex;align-items:center;justify-content:center;' +
@@ -58,9 +59,12 @@
     ].join('\n');
     (document.head || document.documentElement).appendChild(style);
 
-    // Keep the theme background under the strip: the token resolves once
-    // dsh's theme sheets load; the fallback matches the boot page.
-    document.documentElement.style.background = 'var(--dsw-alias-bg-base,#f9fafb)';
+    // The strip takes the theme background itself. The --dsw-* tokens are
+    // defined on <body> (light) and <body data-ds-dark-theme> (dark), and
+    // CSS custom properties only inherit DOWNWARD — an html-level lookup
+    // can never see them. The caption is a body child, so var() resolves
+    // from body's scope and follows light/dark correctly.
+    caption.style.background = 'var(--dsw-alias-bg-base,#f9fafb)';
     // Push the app frame below the strip. dsh's base.css pins
     // html/body/#root heights to 100%; inline styles win over stylesheets.
     document.body.style.marginTop = CAPTION_H + 'px';
