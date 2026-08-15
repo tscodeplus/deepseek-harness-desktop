@@ -68,8 +68,8 @@ describe('parseLatestYml', () => {
 
 describe('selectUpdateFile', () => {
   const files = [
-    { url: 'DeepSeek-Harness-0.1.0.dmg', sha512: 'x' },
-    { url: 'DeepSeek-Harness-0.1.0-arm64.dmg', sha512: 'y' },
+    { url: 'DeepSeek-Harness-Desktop-0.1.0.dmg', sha512: 'x' },
+    { url: 'DeepSeek-Harness-Desktop-0.1.0-arm64.dmg', sha512: 'y' },
   ];
 
   it('returns the single file as-is', () => {

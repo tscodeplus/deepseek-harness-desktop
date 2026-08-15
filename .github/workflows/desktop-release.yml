@@ -213,7 +213,7 @@ jobs:
           VERSION=$(node -p "require('./desktop/package.json').version")
           APP="desktop/src-tauri/target/release/bundle/macos/DeepSeek Harness.app"
           DMG_DIR="desktop/src-tauri/target/release/bundle/dmg"
-          DMG="$DMG_DIR/DeepSeek-Harness-${VERSION}${{ matrix.artifact_suffix }}.dmg"
+          DMG="$DMG_DIR/DeepSeek-Harness-Desktop-${VERSION}${{ matrix.artifact_suffix }}.dmg"
           rm -rf "$DMG_DIR"
           mkdir -p "$DMG_DIR"
           STAGING="$(mktemp -d)"
@@ -356,7 +356,7 @@ jobs:
         with:
           name: dsh-desktop-mac-${{ matrix.bundle_platform }}
           path: |
-            desktop/src-tauri/target/release/bundle/dmg/DeepSeek-Harness-*${{ matrix.artifact_suffix }}.dmg
+            desktop/src-tauri/target/release/bundle/dmg/DeepSeek-Harness-Desktop-*${{ matrix.artifact_suffix }}.dmg
           if-no-files-found: error
 
   # Merge the per-arch dmg entries into a single latest-mac.yml so the mac
@@ -383,8 +383,8 @@ jobs:
           VERSION=$(node -p "require('./desktop/package.json').version")
           # upload-artifact stores the glob's basename at the artifact root
           # (no `dmg/` subdir survives), so look there, not under dmg/.
-          DMG_X64=$(ls mac-x64/DeepSeek-Harness-*.dmg | head -1)
-          DMG_ARM64=$(ls mac-arm64/DeepSeek-Harness-*-arm64.dmg | head -1)
+          DMG_X64=$(ls mac-x64/DeepSeek-Harness-Desktop-*.dmg | head -1)
+          DMG_ARM64=$(ls mac-arm64/DeepSeek-Harness-Desktop-*-arm64.dmg | head -1)
           if [ -z "$DMG_X64" ] || [ -z "$DMG_ARM64" ]; then
             echo "missing dmg: x64='$DMG_X64' arm64='$DMG_ARM64'"
             exit 1
