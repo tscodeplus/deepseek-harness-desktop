@@ -200,6 +200,7 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
         // down — which is exactly when the error window appears.
         "/pages/splash.html" => html(include_str!("../pages/splash.html")),
         "/pages/error.html" => html(include_str!("../pages/error.html")),
+        "/pages/about.html" => html(include_str!("../pages/about.html")),
         "/_desktop/boot-settled" => {
             // The WebUI's boot chain settled (or failed loudly) inside the
             // hidden main window — swap splash → real UI now, so the user
@@ -288,6 +289,17 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
                         .with_status_code(400)
                 }
             }
+        }
+        "/open-log-dir" => {
+            // About dialog action: open the desktop (shell/sidecar) log dir.
+            // The page is same-origin with this control service, so it calls
+            // here directly with the Bearer token.
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let log_dir = crate::config::ShellConfig::load(&app2).log_dir;
+                crate::tray::open_path(&app2, &log_dir);
+            });
+            ok("opened")
         }
         "/restart-service" => {
             // Error-window "Restart Service" button: same entry point as the

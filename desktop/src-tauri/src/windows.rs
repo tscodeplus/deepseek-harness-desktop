@@ -9,12 +9,35 @@ use tauri::WebviewUrl;
 use tauri::{AppHandle, Manager, WebviewWindowBuilder};
 
 use crate::config::{config_path, DesktopConfig, ShellConfig};
+use crate::i18n::tr;
 use crate::sidecar::SidecarState;
 
 pub const MAIN_LABEL: &str = "main";
 pub const SPLASH_LABEL: &str = "splash";
 pub const ERROR_LABEL: &str = "error";
 pub const PROGRESS_LABEL: &str = "updater-progress";
+pub const ABOUT_LABEL: &str = "about";
+
+/// Upstream provenance shown in the About dialog — mirrors
+/// `desktop/dsh-ref.json` (single-mode dependency following).
+#[derive(serde::Deserialize)]
+struct DshRef {
+    #[serde(rename = "ref")]
+    commit: String,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    upstream_version: Option<String>,
+}
+
+fn dsh_ref() -> DshRef {
+    serde_json::from_str(include_str!("../../dsh-ref.json"))
+        .unwrap_or(DshRef {
+            commit: String::new(),
+            tag: None,
+            upstream_version: None,
+        })
+}
 
 /// How long the shell waits for the WebUI's own boot chain to settle (the
 /// boot-watch init script normally signals in a couple of seconds) before
@@ -406,11 +429,70 @@ pub fn close_dialog_window(app: &AppHandle, kind: &str) {
         "progress" => PROGRESS_LABEL,
         "spinner" => "updater-spinner",
         "error" => ERROR_LABEL,
+        "about" => ABOUT_LABEL,
         _ => "updater-dialog",
     };
     if let Some(win) = app.get_webview_window(label) {
         let _ = win.close();
     }
+}
+
+/// Frameless About dialog: desktop version, upstream DeepSeek Harness
+/// version + commit, plus the update-check and open-desktop-logs actions
+/// that used to live in the tray menu. The page is served by the shell's
+/// control service (`/pages/about.html`); runtime data rides in via an
+/// initialization script as JSON and is rendered with textContent (no HTML
+/// injection surface).
+pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(win) = app.get_webview_window(ABOUT_LABEL) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let zh = crate::i18n::is_zh(app);
+    let labels = serde_json::json!({
+        "title": tr("关于", "About", zh),
+        "appName": "DeepSeek Harness Desktop",
+        "desktopVersionLabel": tr("桌面端版本", "Desktop version", zh),
+        "upstreamLabel": tr("上游 DeepSeek Harness", "Upstream DeepSeek Harness", zh),
+        "upstreamVersionLabel": tr("版本", "Version", zh),
+        "upstreamCommitLabel": tr("GitHub commit", "GitHub commit", zh),
+        "checkUpdates": tr("检查更新", "Check for Updates", zh),
+        "openLogs": tr("打开日志目录", "Open Log Folder", zh),
+        "close": tr("关闭", "Close", zh),
+        "checking": tr("正在检查更新…", "Checking for updates…", zh),
+        "dshRepo": "https://github.com/deepseek-ai/deepseek-harness",
+    });
+    let ref_ = dsh_ref();
+    let dark = match crate::config::DesktopConfig::load(&crate::config::config_path(app)).theme.as_str() {
+        "light" => false,
+        "dark" => true,
+        _ => system_dark(),
+    };
+    let state = app.state::<Arc<SidecarState>>();
+    let payload = serde_json::json!({
+        "version": crate::config::ShellConfig::load(app).app_version,
+        "upstreamVersion": ref_.upstream_version,
+        "upstreamTag": ref_.tag,
+        "upstreamCommit": ref_.commit,
+        "ctlPort": crate::ctl_server::port(),
+        "ctlToken": crate::ctl_server::token().unwrap_or_default(),
+        "sidecarPort": state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst),
+        "sidecarToken": state.ctl_token.clone(),
+        "dark": dark,
+        "labels": labels,
+    });
+    let init = format!("window.__DSHD_ABOUT__ = {};", payload);
+    WebviewWindowBuilder::new(app, ABOUT_LABEL, shell_page_url("about.html"))
+        .title(tr("关于", "About", zh))
+        .inner_size(440.0, 420.0)
+        .resizable(false)
+        .decorations(false)
+        .background_color(tauri::window::Color::from(if dark { (20, 20, 31) } else { (250, 250, 252) }))
+        .center()
+        .initialization_script(init)
+        .build()?;
+    Ok(())
 }
 
 /// Apply the configured theme to the main window chrome: window background

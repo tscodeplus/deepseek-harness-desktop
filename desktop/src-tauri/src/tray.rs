@@ -1,5 +1,5 @@
-//! System tray: status label, show/hide, restart service, open data/log dirs,
-//! auto-start & close-to-tray checkboxes, check updates, restart, quit.
+//! System tray: status label, show/hide, restart service, open data dir,
+//! auto-start & close-to-tray checkboxes, restart, about, quit.
 //!
 //! Menu rebuild triggers: config file change (config.rs poll), sidecar status
 //! change (sidecar.rs holder/health loops). Tauri has no "menu about to open"
@@ -18,11 +18,10 @@ const ID_TOGGLE: &str = "toggle-window";
 const ID_STATUS: &str = "status";
 const ID_RESTART_SERVICE: &str = "restart-service";
 const ID_OPEN_DATA: &str = "open-data-dir";
-const ID_OPEN_LOGS: &str = "open-log-dir";
 const ID_AUTO_START: &str = "auto-start";
 const ID_CLOSE_TO_TRAY: &str = "close-to-tray";
-const ID_CHECK_UPDATES: &str = "check-updates";
 const ID_RESTART_APP: &str = "restart-app";
+const ID_ABOUT: &str = "about";
 const ID_QUIT: &str = "quit";
 
 /// Create the tray icon with its initial menu.
@@ -97,15 +96,6 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
         None::<&str>,
     )?;
     menu.append(&open_data)?;
-    let open_logs = MenuItem::with_id(
-        app,
-        ID_OPEN_LOGS,
-        tr("打开日志目录", "Open Log Folder", zh),
-        true,
-        None::<&str>,
-    )?;
-    menu.append(&open_logs)?;
-
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     let auto_start = CheckMenuItem::with_id(
@@ -129,14 +119,6 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
-    let check = MenuItem::with_id(
-        app,
-        ID_CHECK_UPDATES,
-        tr("检查更新", "Check for Updates", zh),
-        true,
-        None::<&str>,
-    )?;
-    menu.append(&check)?;
     let restart_app = MenuItem::with_id(
         app,
         ID_RESTART_APP,
@@ -145,6 +127,8 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
         None::<&str>,
     )?;
     menu.append(&restart_app)?;
+    let about = MenuItem::with_id(app, ID_ABOUT, tr("关于", "About", zh), true, None::<&str>)?;
+    menu.append(&about)?;
     let quit = MenuItem::with_id(app, ID_QUIT, tr("退出", "Quit", zh), true, None::<&str>)?;
     menu.append(&quit)?;
 
@@ -199,14 +183,14 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             let data_dir = cfg.data_dir.join("data");
             open_path(app, &data_dir);
         }
-        ID_OPEN_LOGS => {
-            let log_dir = crate::config::ShellConfig::load(app).log_dir;
-            open_path(app, &log_dir);
-        }
         ID_AUTO_START => toggle_auto_start(app),
         ID_CLOSE_TO_TRAY => toggle_close_to_tray(app),
-        ID_CHECK_UPDATES => check_updates(app),
         ID_RESTART_APP => restart_app(app),
+        ID_ABOUT => {
+            if let Err(e) = crate::windows::show_about_window(app) {
+                log::error!("tray: show_about_window failed: {e}");
+            }
+        }
         ID_QUIT => quit_app(app),
         _ => {}
     }
@@ -230,7 +214,7 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
-fn open_path(app: &AppHandle, path: &std::path::Path) {
+pub(crate) fn open_path(app: &AppHandle, path: &std::path::Path) {
     // Open the directory itself; only fall back to the parent when it does
     // not exist (e.g. logs dir before the sidecar has written anything).
     let target = if path.exists() {
@@ -277,31 +261,6 @@ fn toggle_close_to_tray(app: &AppHandle) {
     crate::config::CLOSE_TO_TRAY.store(cfg.close_to_tray, std::sync::atomic::Ordering::SeqCst);
     let _ = cfg.save(&path);
     rebuild(app, &cfg);
-}
-
-/// Ask the sidecar for a tray-style update check (spinner window + dialogs).
-fn check_updates(app: &AppHandle) {
-    let state = app.state::<std::sync::Arc<SidecarState>>();
-    let snapshot = take_snapshot(&state);
-    if snapshot.kind == StatusKind::Stopped {
-        return;
-    }
-    let port = state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst);
-    let token = state.ctl_token.clone();
-    log::info!("tray: check_updates → POST sidecar :{port}/_desktop/updater/check");
-    tauri::async_runtime::spawn(async move {
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build();
-        if let Ok(client) = client {
-            let url = format!("http://127.0.0.1:{port}/_desktop/updater/check");
-            let resp = client
-                .post(&url)
-                .bearer_auth(&token)
-                .json(&serde_json::json!({ "includeBeta": false, "fromTray": true }))
-                .send()
-                .await;
-            log::info!("tray: updater/check response: {resp:?}");
-        }
-    });
 }
 
 fn restart_app(app: &AppHandle) {

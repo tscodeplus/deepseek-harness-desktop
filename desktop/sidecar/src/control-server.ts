@@ -20,6 +20,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { URL } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { loadConfig, saveConfig, type DesktopConfig } from './config.js';
@@ -384,7 +385,11 @@ export function startHeartbeat(
 
 /** Data dir setup shared with index.ts */
 export function ensureDataDirs(): string {
-  const home = process.env.DSHD_HOME ?? join(process.cwd(), 'data');
+  // The shell always passes DSHD_HOME (app-data dir outside the install
+  // tree); the fallback must never resolve into the cwd (which on Windows is
+  // the sidecar root inside the install dir — uninstall would orphan/delete
+  // user data with the app). Fall back to a home-level dir instead.
+  const home = process.env.DSHD_HOME ?? join(homedir(), '.dsh-desktop');
   mkdirSync(join(home, 'data'), { recursive: true });
   mkdirSync(join(home, 'logs'), { recursive: true });
   process.env.DSHD_LOG_DIR ??= join(home, 'logs');
