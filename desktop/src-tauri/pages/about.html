@@ -66,7 +66,7 @@
   </div>
   <div class="row">
     <span class="label" id="lbl-commit"></span>
-    <span class="value"><a id="lnk-commit" target="_blank" rel="noopener"></a></span>
+    <span class="value"><a id="lnk-commit"></a></span>
   </div>
 </div>
 <div class="footer">
@@ -115,6 +115,16 @@
       commitEl.textContent = a.upstreamCommit.slice(0, 12);
       commitEl.href = (L.dshRepo || 'https://github.com/deepseek-ai/deepseek-harness') +
         '/tree/' + a.upstreamCommit;
+      // Tauri WebViews block target=_blank popups, so open the commit in the
+      // system browser through the shell control service (same endpoint the
+      // updater's "GitHub Release" button uses).
+      commitEl.addEventListener('click', function (e) {
+        e.preventDefault();
+        var url = commitEl.href;
+        if (a.ctlPort && url) {
+          post('http://127.0.0.1:' + a.ctlPort + '/open-external', a.ctlToken, { url: url });
+        }
+      });
     } else {
       commitEl.textContent = '-';
     }

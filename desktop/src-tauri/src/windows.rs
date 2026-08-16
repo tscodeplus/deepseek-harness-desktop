@@ -143,6 +143,23 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     builder = builder
         .initialization_script(boot_watch_cfg)
         .initialization_script(include_str!("../boot-watch.js"));
+    // Theme mirror (all platforms): watch the WebUI's data-ds-dark-theme
+    // marker and persist the rendered theme to desktop-config.json so the
+    // shell chrome, About dialog and updater dialogs match the WebUI.
+    // The sidecar control API is only reachable once the sidecar is up,
+    // which is guaranteed before the main window is created (reveal flow).
+    if let Some(state) = app.try_state::<Arc<SidecarState>>() {
+        let theme_watch_cfg = format!(
+            "window.__DSHD_THEME_WATCH__ = {};",
+            serde_json::json!({
+                "sidecarPort": state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst),
+                "token": state.ctl_token.clone(),
+            })
+        );
+        builder = builder
+            .initialization_script(theme_watch_cfg)
+            .initialization_script(include_str!("../theme-watch.js"));
+    }
     builder.build()?;
     Ok(())
 }
@@ -415,10 +432,13 @@ pub fn show_dialog_window(
     .inner_size(width as f64, height as f64)
     .resizable(false)
     .decorations(false)
-    .background_color(tauri::window::Color::from((20, 20, 31)))
+    .background_color(tauri::window::Color::from(if dark {
+        (20, 20, 31)
+    } else {
+        (250, 250, 252)
+    }))
     .center()
     .build()?;
-    let _ = dark;
     Ok(())
 }
 
@@ -631,7 +651,7 @@ fn set_caption_theme(win: &tauri::WebviewWindow, dark: bool) {
 /// OS-level dark preference: Windows reads AppsUseLightTheme from the
 /// Personalize registry key (0 → dark); other platforms default to false.
 #[cfg(windows)]
-fn system_dark() -> bool {
+pub(crate) fn system_dark() -> bool {
     use windows_sys::Win32::System::Registry::{
         RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD,
     };
@@ -665,7 +685,7 @@ fn system_dark() -> bool {
 /// mode; works without any TCC permission and tracks Auto appearance). Other
 /// non-Windows platforms default to false.
 #[cfg(target_os = "macos")]
-fn system_dark() -> bool {
+pub(crate) fn system_dark() -> bool {
     std::process::Command::new("defaults")
         .args(["read", "-g", "AppleInterfaceStyle"])
         .output()
@@ -678,6 +698,6 @@ fn system_dark() -> bool {
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn system_dark() -> bool {
+pub(crate) fn system_dark() -> bool {
     false
 }

@@ -362,6 +362,12 @@ fn spawn_sidecar(
         .env("DSHD_CONTROL_TOKEN", &state.ctl_token)
         .env("DSHD_APP_VERSION", &cfg.app_version)
         .env("DSHD_OS_LOCALE", &locale)
+        // OS dark preference for the sidecar's dialog theming ("system"
+        // theme fallback) — Node cannot read the OS appearance directly.
+        .env(
+            "DSHD_OS_DARK",
+            if crate::windows::system_dark() { "1" } else { "0" },
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = cmd.spawn()?;

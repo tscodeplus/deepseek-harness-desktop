@@ -82,6 +82,11 @@ struct CloseWindowBody {
     kind: String,
 }
 
+#[derive(Deserialize)]
+struct OpenExternalBody {
+    url: String,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -300,6 +305,29 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
                 crate::tray::open_path(&app2, &log_dir);
             });
             ok("opened")
+        }
+        "/open-external" => {
+            // About-dialog commit link / updater "GitHub Release" button:
+            // open a URL in the system browser. Only http(s) is accepted —
+            // the endpoint is token-protected but the payload originates in
+            // WebView pages, so don't hand the opener arbitrary schemes.
+            match serde_json::from_str::<OpenExternalBody>(body) {
+                Ok(b) if b.url.starts_with("https://") || b.url.starts_with("http://") => {
+                    let app2 = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        let _ = tauri_plugin_opener::OpenerExt::opener(&app2)
+                            .open_url(b.url, None::<&str>);
+                    });
+                    ok("opened")
+                }
+                Ok(_) => {
+                    tiny_http::Response::from_string("bad url").with_status_code(400)
+                }
+                Err(e) => {
+                    tiny_http::Response::from_string(format!("bad body: {e}"))
+                        .with_status_code(400)
+                }
+            }
         }
         "/restart-service" => {
             // Error-window "Restart Service" button: same entry point as the

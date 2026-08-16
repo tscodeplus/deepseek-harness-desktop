@@ -247,14 +247,14 @@ window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
   return html.replace('</head>', `${shim}</head>`);
 }
 
-/** Write an updater diagnostic message to the shared diag log (same path as Electron). */
+/** Write an updater diagnostic message to the shared diag log. */
 function diagLog(msg: string): void {
   try {
     const home = process.env.DSHD_HOME ?? '.';
     const logsDir = path.join(home, 'logs');
     fs.mkdirSync(logsDir, { recursive: true });
     const ts = new Date().toISOString();
-    fs.appendFileSync(path.join(logsDir, 'electron-diag.log'), `[${ts}] [AppUpdater] ${msg}\n`);
+    fs.appendFileSync(path.join(logsDir, 'dshd-diag.log'), `[${ts}] [AppUpdater] ${msg}\n`);
   } catch {
     /* best effort */
   }
@@ -1018,9 +1018,13 @@ export class AppUpdater {
     } catch {
       /* config not ready */
     }
-    const locale = process.env.DSHD_OS_LOCALE ?? '';
-    // Conservative: no reliable OS dark-mode signal in Node — match Electron's
-    // old default window style for 'system' (dark splash/updater chrome).
+    // "system" theme (or config not ready): the Rust shell injects the OS
+    // dark preference (DSHD_OS_DARK); in practice the theme-watch init
+    // script also persists the WebUI's rendered theme to desktop-config.json
+    // within moments of boot, so this path only matters very early.
+    const osDark = process.env.DSHD_OS_DARK;
+    if (osDark === '1') return true;
+    if (osDark === '0') return false;
     return true;
   }
 
