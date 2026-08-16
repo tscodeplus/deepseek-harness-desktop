@@ -223,36 +223,28 @@ jobs:
           VERSION=$(node -p "require('./desktop/package.json').version")
           APP="desktop/src-tauri/target/release/bundle/macos/DeepSeek Harness.app"
           DMG_DIR="desktop/src-tauri/target/release/bundle/dmg"
+          DMG="$DMG_DIR/DeepSeek-Harness-Desktop-${VERSION}${{ matrix.artifact_suffix }}.dmg"
           rm -rf "$DMG_DIR"
           mkdir -p "$DMG_DIR"
           STAGING="$(mktemp -d)"
           cp -R "$APP" "$STAGING/DeepSeek Harness.app"
           ln -s /Applications "$STAGING/Applications"
           cp desktop/scripts/dmg-layout/.DS_Store "$STAGING/.DS_Store"
-          # Compression comparison (rc2 experiment): build the same staging
-          # as UDBZ (current), UDBZ with bzip2-level=9, and ULMO (LZMA).
-          # Sizes are compared on the artifact; the winner becomes the
-          # release format (the unsuffixed name stays UDBZ for now).
-          for spec in "UDBZ::" "UDBZ:bzip9:-imagekey bzip2-level=9" "ULMO:ulmo:"; do
-            FMT="${spec%%:*}"
-            rest="${spec#*:}"
-            SUFFIX="${rest%%:*}"
-            IMAGEKEY="${rest#*:}"
-            OUT="$DMG_DIR/DeepSeek-Harness-Desktop-${VERSION}${SUFFIX}${{ matrix.artifact_suffix }}.dmg"
-            for attempt in 1 2 3; do
-              if hdiutil create -volname "DeepSeek Harness" -srcfolder "$STAGING" -ov -format "$FMT" $IMAGEKEY "$OUT"; then
-                break
-              fi
-              echo "hdiutil create failed (attempt $attempt/3), retrying in 10s..."
-              sleep 10
-            done
-            if [ ! -f "$OUT" ]; then
-              echo "hdiutil create failed after 3 attempts"
-              exit 1
+          # ULMO (LZMA) won the rc2 compression comparison: ~158 MiB vs
+          # ~176 MiB for UDBZ (verified on both x64 and arm64).
+          for attempt in 1 2 3; do
+            if hdiutil create -volname "DeepSeek Harness" -srcfolder "$STAGING" -ov -format ULMO "$DMG"; then
+              break
             fi
+            echo "hdiutil create failed (attempt $attempt/3), retrying in 10s..."
+            sleep 10
           done
+          if [ ! -f "$DMG" ]; then
+            echo "hdiutil create failed after 3 attempts"
+            exit 1
+          fi
           rm -rf "$STAGING"
-          ls -lh "$DMG_DIR"
+          ls -lh "$DMG"
 
       - name: Smoke test (launch app, check dsh web on 3080)
         if: runner.os == 'macOS'

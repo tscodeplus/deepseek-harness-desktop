@@ -35,11 +35,11 @@
         "installMode": "currentUser",
         "installerHooks": "installer-hooks.nsh",
         "languages": [
-          "SimpChinese",
-          "English"
+          "English",
+          "SimpChinese"
         ],
         "compression": "lzma",
-        "displayLanguageSelector": true,
+        "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico"
       },
       "webviewInstallMode": {
