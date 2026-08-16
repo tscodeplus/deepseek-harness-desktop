@@ -107,12 +107,13 @@ export function resolveUILanguage(): SupportedLocale {
 /**
  * Locale files: dsh does NOT ship OhMyAgent-style desktop.json locale files,
  * so resolution is best-effort — any missing file falls back to bundled
- * English strings (below). Port zh-CN translations as a follow-up.
+ * English strings (below). zh-CN lives in sidecar/src/locales/zh-CN/desktop.json
+ * and is copied next to the bundled sidecar by copy-sidecar-static.cjs.
  */
 function resolveLocalesDir(): string {
   const isDev = process.env.DSHD_DEV === '1';
   const base = isDev
-    ? path.join(process.cwd(), 'src', 'locales')
+    ? path.join(process.cwd(), 'sidecar', 'src', 'locales')
     : path.join(process.cwd(), 'locales');
   return base;
 }

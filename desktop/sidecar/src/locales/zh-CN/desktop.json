@@ -1,0 +1,49 @@
+{
+  "updater": {
+    "checking": "正在检查更新…",
+    "upToDate": "已是最新版本",
+    "newVersion": "发现新版本 {{version}}",
+    "noReleaseNotes": "暂无发布说明",
+    "upgrade": "升级",
+    "cancel": "取消",
+    "ok": "确定",
+    "checkFailed": "检查更新失败",
+    "rateLimitExceeded": "检查更新频率受限，请稍后重试",
+    "networkTimeout": "检查更新超时",
+    "noUpdateAvailable": "没有可用更新",
+    "noUpdateConfig": "未配置更新",
+    "downloading": "正在下载…",
+    "downloadFailed": "下载失败",
+    "downloaded": "已下载",
+    "installAndRestart": "安装并重启",
+    "speed": "速度",
+    "githubRelease": "GitHub Release",
+    "unsignedMacBuild": "此版本未签名，可能被 macOS 拦截"
+  },
+  "tray": {
+    "showHide": "显示 / 隐藏",
+    "restartService": "重启服务",
+    "restarting": "正在重启…",
+    "checkUpdates": "检查更新",
+    "openDataDir": "打开数据目录",
+    "openLogs": "打开日志",
+    "autoStart": "开机自启动",
+    "closeToTray": "关闭到托盘",
+    "restartApp": "重启应用",
+    "quit": "退出",
+    "serviceStatusRunning": "服务运行中",
+    "serviceStatusError": "服务异常",
+    "serviceStatusStopped": "服务已停止"
+  },
+  "splash": {
+    "starting": "正在启动…"
+  },
+  "error": {
+    "startupFailed": "启动失败",
+    "portInUse": "端口被占用",
+    "connectionFailed": "连接失败",
+    "tokenInvalid": "无效的令牌",
+    "pageLoadTimeout": "页面加载超时",
+    "pageLoadFailed": "页面加载失败"
+  }
+}

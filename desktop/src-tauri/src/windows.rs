@@ -461,7 +461,6 @@ pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
         "checkUpdates": tr("检查更新", "Check for Updates", zh),
         "openLogs": tr("打开日志目录", "Open Log Folder", zh),
         "close": tr("关闭", "Close", zh),
-        "checking": tr("正在检查更新…", "Checking for updates…", zh),
         "dshRepo": "https://github.com/deepseek-ai/deepseek-harness",
     });
     let ref_ = dsh_ref();
@@ -505,6 +504,24 @@ pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Apply the configured theme to the About dialog (window chrome + the
+/// page's `data-theme` attribute). Called from apply_theme so a theme change
+/// in the WebUI re-themes an already-open About window immediately.
+fn apply_theme_about(app: &AppHandle, dark: bool) -> tauri::Result<()> {
+    if let Some(win) = app.get_webview_window(ABOUT_LABEL) {
+        win.set_background_color(Some(tauri::window::Color::from(if dark {
+            (20, 20, 31)
+        } else {
+            (250, 250, 252)
+        })))?;
+        let _ = win.eval(&format!(
+            "document.body.setAttribute('data-theme', '{}');",
+            if dark { "dark" } else { "light" }
+        ));
+    }
+    Ok(())
+}
+
 /// Apply the configured theme to the main window chrome: window background
 /// (prevents white flash while the page paints) and, on Windows, the native
 /// title-bar colors (DWM) so dark mode blends with the UI's dark background
@@ -515,6 +532,7 @@ pub fn apply_theme(app: &AppHandle, theme: &str) -> tauri::Result<()> {
         "dark" => true,
         _ => system_dark(),
     };
+    apply_theme_about(app, dark)?;
     let color = if dark {
         tauri::window::Color::from((10, 10, 10))
     } else {

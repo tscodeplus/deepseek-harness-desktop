@@ -86,6 +86,15 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
     )?;
     menu.append(&restart)?;
 
+    let restart_app = MenuItem::with_id(
+        app,
+        ID_RESTART_APP,
+        tr("重启应用", "Restart App", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&restart_app)?;
+
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     let open_data = MenuItem::with_id(
@@ -119,14 +128,6 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
-    let restart_app = MenuItem::with_id(
-        app,
-        ID_RESTART_APP,
-        tr("重启应用", "Restart App", zh),
-        true,
-        None::<&str>,
-    )?;
-    menu.append(&restart_app)?;
     let about = MenuItem::with_id(app, ID_ABOUT, tr("关于", "About", zh), true, None::<&str>)?;
     menu.append(&about)?;
     let quit = MenuItem::with_id(app, ID_QUIT, tr("退出", "Quit", zh), true, None::<&str>)?;

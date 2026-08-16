@@ -41,8 +41,6 @@
   button:hover { background:var(--btn-hover); }
   button.secondary { background:var(--chip-bg); color:var(--fg); }
   button.secondary:hover { background:var(--border); }
-  #check-status { margin-top:10px; font-size:12px; color:var(--muted);
-                  min-height:16px; }
 </style></head><body>
 <div class="header">
   <img id="app-icon" class="logo" alt="" style="display:none">
@@ -70,7 +68,6 @@
     <span class="label" id="lbl-commit"></span>
     <span class="value"><a id="lnk-commit" target="_blank" rel="noopener"></a></span>
   </div>
-  <div id="check-status"></div>
 </div>
 <div class="footer">
   <button class="secondary" id="btn-open-logs"></button>
@@ -133,19 +130,15 @@
       });
     }
 
-    var statusEl = document.getElementById('check-status');
     document.getElementById('btn-check').textContent = L.checkUpdates || 'Check for Updates';
     document.getElementById('btn-open-logs').textContent = L.openLogs || 'Open Log Folder';
     document.getElementById('btn-close').textContent = L.close || 'Close';
 
     document.getElementById('btn-check').onclick = function () {
-      if (statusEl) statusEl.textContent = L.checking || 'Checking…';
       var port = a.sidecarPort;
-      if (!port) { if (statusEl) statusEl.textContent = ''; return; }
+      if (!port) return;
       post('http://127.0.0.1:' + port + '/_desktop/updater/check', a.sidecarToken,
-           { includeBeta: false, fromTray: true }).catch(function () {
-        if (statusEl) statusEl.textContent = '';
-      });
+           { includeBeta: false, fromTray: true }).catch(function () {});
     };
     document.getElementById('btn-open-logs').onclick = function () {
       if (a.ctlPort) {
