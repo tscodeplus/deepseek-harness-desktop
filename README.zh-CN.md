@@ -18,12 +18,13 @@
 
 ## 特性
 
-- **零配置开箱即用** —— 内置 Node.js 运行时与预构建的 dsh 闭包，无需手动安装 Node.js 或做任何配置
+- **开箱即用** —— 内置 Node.js 运行时与预构建的 dsh 闭包，无需安装 Node.js、无需命令行；安装后配置 API Key 即可使用
+- **支持三平台** —— 每个版本自动构建 Windows x64、macOS Intel (x64)、macOS Apple Silicon (arm64) 三平台安装包
+- **支持在线更新** —— 应用内自动检查 GitHub Releases 新版本；Windows 一键下载安装，macOS（未签名）引导打开 Releases 页面
 - **Tauri 2 壳** —— 原生、轻量、启动快；Windows 使用 WebView2，macOS 使用 WKWebView
 - **仅限本地** —— dsh 只监听 `http://127.0.0.1:3080`，同源加载，无远程网关
 - **健壮的生命周期管理** —— 壳拉起 sidecar、sidecar 拉起 `dsh web`；心跳检测 + Windows Job Object 保证退出/崩溃/卸载后无孤儿进程
 - **系统托盘 + 单实例** —— 最小化到托盘、关闭到托盘、开机自启、防重复启动
-- **自动更新（Windows）** —— CI 生成 `latest.yml` 元数据，应用内检查 GitHub Releases 更新
 - **官方蓝鲸图标** —— 字节级取自上游 dsh favicon；任务栏/托盘图标清晰，注入式标题栏支持深色模式
 - **无边框 + 注入式标题栏** —— **不改上游源码**：拖拽区 + 最小化/最大化/关闭按钮悬浮覆盖页面，随主题变色
 - **确定性依赖跟随** —— 构建产物与 `desktop/dsh-ref.json` 钉住的上游 commit 一一对应（单一模式 git-follow，无 fork、无补丁冲突）
