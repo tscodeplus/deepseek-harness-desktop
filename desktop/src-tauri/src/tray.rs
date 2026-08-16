@@ -1,5 +1,5 @@
-//! System tray: status label, show/hide, restart service, open data dir,
-//! auto-start & close-to-tray checkboxes, restart, about, quit.
+//! System tray: status label, show/hide, restart service, auto-start &
+//! close-to-tray checkboxes, restart, about, quit.
 //!
 //! Menu rebuild triggers: config file change (config.rs poll), sidecar status
 //! change (sidecar.rs holder/health loops). Tauri has no "menu about to open"
@@ -17,7 +17,6 @@ use crate::sidecar::{take_snapshot, SidecarState, StatusKind};
 const ID_TOGGLE: &str = "toggle-window";
 const ID_STATUS: &str = "status";
 const ID_RESTART_SERVICE: &str = "restart-service";
-const ID_OPEN_DATA: &str = "open-data-dir";
 const ID_AUTO_START: &str = "auto-start";
 const ID_CLOSE_TO_TRAY: &str = "close-to-tray";
 const ID_RESTART_APP: &str = "restart-app";
@@ -86,16 +85,6 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
     )?;
     menu.append(&restart)?;
 
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-
-    let open_data = MenuItem::with_id(
-        app,
-        ID_OPEN_DATA,
-        tr("打开数据目录", "Open Data Folder", zh),
-        true,
-        None::<&str>,
-    )?;
-    menu.append(&open_data)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     let auto_start = CheckMenuItem::with_id(
@@ -176,13 +165,6 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
         ID_TOGGLE => toggle_main_window(app),
         ID_RESTART_SERVICE => crate::sidecar::restart(app),
-        ID_OPEN_DATA => {
-            // Real data (app.db, downloads, …) lives in `<userData>/data`;
-            // the userData root itself only holds config.yaml and logs/.
-            let cfg = crate::config::ShellConfig::load(app);
-            let data_dir = cfg.data_dir.join("data");
-            open_path(app, &data_dir);
-        }
         ID_AUTO_START => toggle_auto_start(app),
         ID_CLOSE_TO_TRAY => toggle_close_to_tray(app),
         ID_RESTART_APP => restart_app(app),

@@ -45,7 +45,8 @@
                   min-height:16px; }
 </style></head><body>
 <div class="header">
-  <svg class="logo" viewBox="0 0 36 36" aria-hidden="true">
+  <img id="app-icon" class="logo" alt="" style="display:none">
+  <svg id="app-icon-fallback" class="logo" viewBox="0 0 36 36" aria-hidden="true">
     <rect width="36" height="36" rx="8" fill="#3b5bdb"/>
     <path d="M18 7c4.7 0 7.6 2.3 7.6 6.2 0 2.4-1.2 4.1-3.2 5.1 2.5.8 4.1 2.6 4.1 5.2 0 3.8-3.2 6.5-8.5 6.5-5.2 0-8.6-2.6-8.6-6.5 0-2.6 1.6-4.4 4.1-5.2-2-1-3.2-2.7-3.2-5.1C10.3 9.3 13.2 7 18 7zm0 2.7c-2.6 0-4.2 1.2-4.2 3.3 0 2 1.4 3.2 4.2 3.2s4.2-1.2 4.2-3.2c0-2.1-1.6-3.3-4.2-3.3zm0 8.2c-2.9 0-4.9 1.5-4.9 4 0 2.4 1.9 3.9 4.9 3.9s4.9-1.5 4.9-3.9c0-2.5-2-4-4.9-4z" fill="#fff"/>
   </svg>
@@ -86,6 +87,12 @@
     }
     if (a.dark) document.body.setAttribute('data-theme', 'dark');
 
+    if (a.icon) {
+      var img = document.getElementById('app-icon');
+      img.src = a.icon;
+      img.style.display = 'block';
+      document.getElementById('app-icon-fallback').style.display = 'none';
+    }
     set('app-name', L.appName || 'DeepSeek Harness Desktop');
     set('app-sub', a.version ? ('v' + a.version) : '');
     set('lbl-ver', L.desktopVersionLabel || 'Desktop version');

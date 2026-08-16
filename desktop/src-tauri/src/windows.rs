@@ -27,6 +27,7 @@ struct DshRef {
     #[serde(default)]
     tag: Option<String>,
     #[serde(default)]
+    #[serde(rename = "upstreamVersion")]
     upstream_version: Option<String>,
 }
 
@@ -454,7 +455,7 @@ pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
         "title": tr("关于", "About", zh),
         "appName": "DeepSeek Harness Desktop",
         "desktopVersionLabel": tr("桌面端版本", "Desktop version", zh),
-        "upstreamLabel": tr("上游 DeepSeek Harness", "Upstream DeepSeek Harness", zh),
+        "upstreamLabel": "DeepSeek Harness",
         "upstreamVersionLabel": tr("版本", "Version", zh),
         "upstreamCommitLabel": tr("GitHub commit", "GitHub commit", zh),
         "checkUpdates": tr("检查更新", "Check for Updates", zh),
@@ -470,11 +471,20 @@ pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
         _ => system_dark(),
     };
     let state = app.state::<Arc<SidecarState>>();
+    // App icon for the About header, inlined as a data URI so the page does
+    // not need an extra route. 128px is plenty for a 36px header render.
+    use base64::Engine;
+    let icon = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("../icons/128x128.png"))
+    );
     let payload = serde_json::json!({
         "version": crate::config::ShellConfig::load(app).app_version,
         "upstreamVersion": ref_.upstream_version,
         "upstreamTag": ref_.tag,
         "upstreamCommit": ref_.commit,
+        "icon": icon,
         "ctlPort": crate::ctl_server::port(),
         "ctlToken": crate::ctl_server::token().unwrap_or_default(),
         "sidecarPort": state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst),
