@@ -1,10 +1,10 @@
 //! Shell configuration + mirror of the sidecar-owned `desktop-config.json`.
 //!
-//! The sidecar is the primary writer of `desktop-config.json` (the file lives at
-//! the same path electron-store used — `%APPDATA%/DeepSeek Harness/desktop-config.json` —
-//! so existing user config carries over unchanged). The shell reads the file at
-//! startup and polls mtime once per second to react to `theme` / `language` /
-//! `closeToTray` changes without a push channel.
+//! The sidecar is the primary writer of `desktop-config.json` (it lives at
+//! `<data_dir>/desktop-config.json`, where `data_dir` is the upstream dsh
+//! home `~/.dsh`). The shell reads the file at startup and polls mtime once
+//! per second to react to `theme` / `language` / `closeToTray` changes
+//! without a push channel.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -12,11 +12,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 use tauri::{AppHandle, Manager};
 
-/// Paths the shell passes to the sidecar. Must match the Electron userData layout
-/// exactly (`app.getPath('userData')`) so app.db / config.yaml / downloads survive.
+/// Paths the shell passes to the sidecar. The data root is the upstream dsh
+/// default home (`~/.dsh` — see `@deepseek-ai/dsh-home-paths` `resolveDshHome`),
+/// so the desktop app shares profiles / storages / credentials with the
+/// upstream CLI instead of keeping a private copy.
 #[derive(Clone, Debug)]
 pub struct ShellConfig {
-    /// `%APPDATA%/DeepSeek Harness` on Windows, `~/Library/Application Support/DeepSeek Harness` on macOS.
+    /// `~/.dsh` on all platforms (upstream dsh default home).
     pub data_dir: PathBuf,
     pub db_path: PathBuf,
     pub config_file: PathBuf,
@@ -29,10 +31,9 @@ pub struct ShellConfig {
 
 impl ShellConfig {
     pub fn load(app: &AppHandle) -> Self {
-        // Electron userData == dirs::data_dir()/DeepSeek Harness on both Windows and macOS.
-        let data_dir = dirs::data_dir()
+        let data_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("DeepSeek Harness");
+            .join(".dsh");
         let resources_dir = app
             .path()
             .resource_dir()

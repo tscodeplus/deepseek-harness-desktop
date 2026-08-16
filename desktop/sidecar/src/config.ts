@@ -1,6 +1,7 @@
 // Desktop config — port of desktop/src/config.ts (electron-store) to a plain
 // JSON file at <data_dir>/desktop-config.json. Same path and file name as
-// electron-store used, so existing user config carries over unchanged.
+// electron-store used, but the file now lives under the upstream dsh home
+// (~/.dsh) like all other user data.
 // The sidecar is the primary writer; the Rust shell mirrors it by polling
 // mtime (see src-tauri/src/config.rs).
 

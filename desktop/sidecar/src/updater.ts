@@ -4,7 +4,7 @@
 // Electron dependencies replaced:
 //   1. net.fetch            → global fetch (Node 22 stream API identical)
 //   2. app.getVersion()     → process.env.DSHD_APP_VERSION
-//   3. app.getPath(userData)→ process.env.DSHD_HOME
+//   3. DSHD_HOME (the upstream dsh home ~/.dsh, passed by the shell)
 //   4. webContents.send()   → broadcastEvent() (SSE to dialogs)
 //   5. spawn(installer --updated) → POST shell /update-install (Rust spawns
 //      the installer DETACHED and exits)
