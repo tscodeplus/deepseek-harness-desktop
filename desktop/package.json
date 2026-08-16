@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.0-rc1",
+  "version": "0.1.0-rc2",
   "description": "DeepSeek Harness Desktop — Tauri 2 shell + Node sidecar for the dsh agent harness",
   "private": true,
   "type": "module",
