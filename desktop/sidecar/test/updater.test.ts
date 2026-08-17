@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareVersions, parseLatestYml, selectUpdateFile } from '../src/updater.js';
+import { compareVersions, mdToHtml, parseLatestYml, selectUpdateFile } from '../src/updater.js';
 
 describe('compareVersions', () => {
   it('orders stable versions numerically', () => {
@@ -81,6 +81,81 @@ describe('parseLatestYml', () => {
     const out = parseLatestYml(yml);
     expect(out.version).toBe('0.1.0');
     expect(out.files).toEqual([{ url: 'a.exe', sha512: '' }]);
+  });
+});
+
+describe('mdToHtml', () => {
+  it('renders a blockquote (was left as raw ">" text)', () => {
+    const out = mdToHtml('> 基于上游 DeepSeek Harness\n>\n> 社区桌面版本');
+    expect(out).toContain('<blockquote>');
+    expect(out).toContain('基于上游 DeepSeek Harness');
+    expect(out).not.toContain('&gt; 基于');
+  });
+
+  it('renders a list nested inside a blockquote', () => {
+    const md = ['> 说明：', '> - 上游发布版本：0.1.0-rc.6（npm latest）', '> - 上游 commit：47f94385'].join('\n');
+    const out = mdToHtml(md);
+    expect(out).toContain('<blockquote>');
+    expect(out).toContain('<ul>');
+    expect(out).toContain('<li>上游发布版本：0.1.0-rc.6（npm latest）</li>');
+    expect(out).not.toContain('&gt; -');
+  });
+
+  it('renders a GFM table (was left as raw | separators)', () => {
+    const md = [
+      '| 平台 | 文件 |',
+      '|---|---|',
+      '| Windows x64 | DeepSeek-Harness-Desktop-Setup-0.2.0.exe |',
+      '| macOS Intel | DeepSeek-Harness-Desktop-0.2.0.dmg |',
+    ].join('\n');
+    const out = mdToHtml(md);
+    expect(out).toContain('<table>');
+    expect(out).toContain('<thead>');
+    expect(out).toContain('<th>平台</th>');
+    expect(out).toContain('<td>DeepSeek-Harness-Desktop-Setup-0.2.0.exe</td>');
+    expect(out).not.toContain('|---|---|');
+  });
+
+  it('renders bullet/ordered lists and inline code', () => {
+    const out = mdToHtml('- 上游发布版本：`0.1.0-rc.6`\n- 上游 GitHub commit：47f94385');
+    expect(out).toContain('<ul>');
+    expect(out).toContain('<li>上游发布版本：');
+    expect(out).toContain('<code>0.1.0-rc.6</code>');
+    expect(mdToHtml('1. 第一\n2. 第二')).toContain('<ol>');
+  });
+
+  it('renders fenced code blocks, headings, emphasis and links', () => {
+    const md = '## 变更\n\n**重要** [文档](https://example.com/docs)\n\n```js\nconsole.log(1)\n```';
+    const out = mdToHtml(md);
+    expect(out).toContain('<h2>变更</h2>');
+    expect(out).toContain('<strong>重要</strong>');
+    expect(out).toContain('<a href="https://example.com/docs">文档</a>');
+    expect(out).toContain('<pre><code'); // marked adds a language-* class
+    expect(out).toContain('console.log(1)');
+  });
+
+  it('neutralizes javascript: links and strips event handlers from markdown input', () => {
+    const md = 'text [bad](javascript:alert(2)) and [ok](https://example.com)';
+    const out = mdToHtml(md);
+    expect(out).toContain('href="#"');
+    expect(out).toContain('href="https://example.com"');
+    expect(out).not.toContain('javascript:');
+  });
+
+  it('strips scripts and event handlers from HTML input', () => {
+    const md = '<b>x</b> <script>alert(1)</script> <img src="javascript:x" onerror="alert(3)">';
+    const out = mdToHtml(md);
+    expect(out).not.toContain('<script');
+    expect(out).not.toContain('onerror');
+    expect(out).toContain('<b>x</b>');
+    expect(out).toContain('src=""');
+  });
+
+  it('returns empty for blank input and truncates past 3000 chars', () => {
+    expect(mdToHtml('')).toBe('');
+    expect(mdToHtml('   \n  ')).toBe('');
+    expect(mdToHtml('x'.repeat(4000))).toMatch(/…$/);
+    expect(mdToHtml('x'.repeat(4000)).length).toBeLessThanOrEqual(3001);
   });
 });
 

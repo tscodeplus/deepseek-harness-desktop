@@ -14,6 +14,7 @@
  * Run from: desktop/ directory
  */
 
+const { createHash } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -44,7 +45,11 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // so the SDK's bundled binary is dead weight;
 // v9: keep the full @deepseek-ai/dsh-sdk* family (client/protocol/jsonrpc),
 // including the jsonrpc demo package (tiny; kept for parity with upstream).
-const BUNDLE_DEPS_VERSION = 9;
+// v10: fast path also fingerprints pnpm-lock.yaml — adding a prod dependency
+// (e.g. marked for release-notes rendering) used to keep the stale staging
+// and ship a bundle whose sidecar crashed at import time with
+// "Cannot find package '<new-dep>'".
+const BUNDLE_DEPS_VERSION = 10;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -680,6 +685,10 @@ function copyRuntimeDist(src, dest, visited = new Set()) {
 const RUNTIME_DIST_SKIP_DIRS = new Set([
   '.agents',
   '.claude',
+  // Git metadata is never read by the running dsh CLI — and the upstream
+  // checkout can carry git temp files (objects/pack/tmp_pack_*) that the
+  // tauri-build resource walker trips over with os error 5 (access denied).
+  '.git',
   '.github',
   'docs',
   'examples',
@@ -810,6 +819,18 @@ function satisfiesMajor(version, range) {
 // Main
 // ---------------------------------------------------------------------------
 
+/** sha256 of pnpm-lock.yaml — the set of flattened packages must follow the
+ * lockfile, not just the dsh ref: adding a prod dependency with the staging
+ * cached used to ship a bundle that crashed at import time. */
+function lockfileHash() {
+  try {
+    const raw = fs.readFileSync(path.join(DESKTOP, 'pnpm-lock.yaml'), 'utf8');
+    return createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  } catch {
+    return '';
+  }
+}
+
 function main() {
   log('');
   log('📦 Preparing flat node_modules for the Tauri sidecar...');
@@ -825,6 +846,7 @@ function main() {
   } catch {
     /* no dsh-ref.json — full flatten below */
   }
+  const lockHash = lockfileHash();
   try {
     const manifest = JSON.parse(fs.readFileSync(BUNDLE_MANIFEST_FILE, 'utf8'));
     const count = fs.existsSync(STAGING_NM)
@@ -834,6 +856,7 @@ function main() {
       manifest.bundleDepsVersion === BUNDLE_DEPS_VERSION &&
       manifest.ref === pinnedRef &&
       manifest.targetPlatform === TARGET_PLATFORM &&
+      manifest.lockHash === lockHash &&
       count > 100 &&
       fs.existsSync(DSH_RUNTIME_DIST)
     ) {
@@ -968,6 +991,7 @@ function main() {
         bundleDepsVersion: BUNDLE_DEPS_VERSION,
         ref: pinnedRef,
         targetPlatform: TARGET_PLATFORM,
+        lockHash,
         packageCount: count,
         completedAt: new Date().toISOString(),
       },

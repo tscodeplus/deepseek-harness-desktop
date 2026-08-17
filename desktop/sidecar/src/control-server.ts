@@ -230,7 +230,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ControlSe
     }
 
     if (path.startsWith('/_desktop/plugin/')) {
-      await handlePlugin(path, method, req, res);
+      await handlePlugin(path, method, url, req, res);
       return;
     }
 
@@ -349,6 +349,7 @@ async function handleUpdater(
 async function handlePlugin(
   path: string,
   method: string,
+  url: URL,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -359,6 +360,14 @@ async function handlePlugin(
 
     if (action === 'list' && method === 'GET') {
       json(res, 200, manager.list());
+      return;
+    }
+
+    if (action === 'outdated' && method === 'GET') {
+      // ?refresh=1 re-fetches instead of serving the TTL cache — the UI calls
+      // it right before an update action ("check versions first").
+      const force = url.searchParams.get('refresh') === '1';
+      json(res, 200, { plugins: await plugins.checkOutdated(force) });
       return;
     }
 

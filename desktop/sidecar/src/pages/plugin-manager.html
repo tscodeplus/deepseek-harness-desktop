@@ -115,6 +115,31 @@
   #error-banner { display: none; color: var(--danger); padding: 8px 12px;
     border: 1px solid var(--danger); border-radius: 10px; }
   #error-banner.visible { display: block; }
+  /* Transient status toast (e.g. "checking versions…") — floats over the
+     window, never replaces the manage-bar hint text. */
+  #toast {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(30, 36, 48, 0.92); color: #fff; font-size: 12px;
+    padding: 7px 16px; border-radius: 8px; z-index: 100;
+    opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 80%;
+  }
+  body[data-theme="dark"] #toast { background: rgba(230, 230, 240, 0.92); color: #14141f; }
+  #toast.visible { opacity: 1; }
+  /* In-page modal — the WebView2 host never renders native window.alert /
+     window.confirm (they vanish silently, confirm resolves true), so every
+     prompt is this overlay instead. */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35);
+    display: none; align-items: center; justify-content: center; z-index: 200;
+  }
+  .modal-overlay.visible { display: flex; }
+  .modal {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; max-width: 420px; width: 90%;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  }
+  .modal .msg { line-height: 1.6; word-break: break-all; white-space: pre-wrap; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   /* Scrollbars must follow the page theme (default is OS-theme): match the
      updater dialog pattern — 5px, transparent track, theme-tinted thumb. */
   ::-webkit-scrollbar { width: 5px; }
@@ -173,6 +198,16 @@
   </section>
   <div id="error-banner"></div>
 </main>
+<div id="toast"></div>
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="msg" id="modal-msg"></div>
+    <div class="actions">
+      <button class="ghost" id="modal-cancel">取消</button>
+      <button id="modal-ok">确定</button>
+    </div>
+  </div>
+</div>
 <script>
 'use strict';
 // -- bootstrap -------------------------------------------------------------
@@ -188,20 +223,29 @@ var I18N = {
     update: '更新', remove: '移除',
     manageHint: '当前 profile 已激活的插件层（含预置）；DeepSeek Harness 设置页的插件列表是运行时全部插件（含内置），与此不同。',
     empty: '尚未安装任何插件',
-    installHint: '安装后需重启服务才会加载新插件；重启服务后应用窗口会自动刷新。',
+    installHint: '安装后需重启服务才会加载新插件；重启服务后本窗口关闭，应用页面自动刷新。',
     installPrompt: '确定要安装该插件吗？插件可在你的用户权限下执行安装脚本。',
     removePrompt: '确定要移除插件 “{name}” 吗？重启后生效。',
     updatePrompt: '确定要更新插件 “{name}” 吗？',
+    updatePromptTo: '确定将 “{name}” 从 {from} 更新到 {to} 吗？',
+    updatePromptUnverified: '无法确认 “{name}” 的版本（网络问题）。仍要更新吗？',
+    ok: '确定',
     running: '正在运行：{action} {spec}',
     done: '操作完成（{action} {spec}）',
     error: '操作失败：{msg}',
     canceled: '操作已取消',
     cancel: '取消', close: '关闭',
-    restartHint: '操作完成，点击「重启服务」后生效；服务恢复时应用窗口会自动刷新。',
+    restartHint: '操作完成，点击「重启服务」后生效；本窗口会关闭，应用页面在服务恢复时自动刷新。',
     restartNow: '重启服务',
     restarting: '正在重启服务…',
     presetBadge: '预置', bundledBadge: '已装配',
     versionLabel: '已装 {v}', requestedLabel: '依赖 {r}',
+    allLatest: '所有插件均已是最新版本',
+    alreadyLatest: '“{name}”已是最新版本（{v}）',
+    checkingVersions: '正在检查插件版本…',
+    builtinBtnTitle: '内置插件，随应用版本更新，无需单独更新',
+    noUpdatable: '没有可单独更新的插件（内置插件随应用版本更新）',
+    checkFailedConfirm: '暂时无法确认插件版本（网络或版本格式问题）。仍要执行全部更新吗？',
     busyError: '已有插件操作正在运行，请稍候。',
     confirmBusy: '仍要开始新的操作吗？（将覆盖当前进度）',
   },
@@ -210,20 +254,29 @@ var I18N = {
     update: 'Update', remove: 'Remove',
     manageHint: 'Active plugin layers of this profile (incl. presets); the DeepSeek Harness Settings → Plugins page lists every runtime plugin (incl. built-ins).',
     empty: 'No plugins installed yet',
-    installHint: 'A service restart is needed to load a newly installed plugin; this window refreshes automatically afterwards.',
+    installHint: 'A service restart is needed to load a newly installed plugin; this window closes and the app page reloads afterwards.',
     installPrompt: 'Install this plugin? Plugins run lifecycle scripts with your user permissions.',
     removePrompt: 'Remove plugin "{name}"? It takes effect after a service restart.',
     updatePrompt: 'Update plugin "{name}"?',
+    updatePromptTo: 'Update "{name}" from {from} to {to}?',
+    updatePromptUnverified: 'Could not verify the version of "{name}" (network issue). Update anyway?',
+    ok: 'OK',
     running: 'Running: {action} {spec}',
     done: 'Done ({action} {spec})',
     error: 'Failed: {msg}',
     canceled: 'Canceled',
     cancel: 'Cancel', close: 'Close',
-    restartHint: 'Operation complete — restart the service to apply; this window refreshes automatically when it recovers.',
+    restartHint: 'Operation complete — restart the service to apply; this window closes and the app page reloads when the service recovers.',
     restartNow: 'Restart Service',
     restarting: 'Restarting service…',
     presetBadge: 'Preset', bundledBadge: 'Bundled',
     versionLabel: 'installed {v}', requestedLabel: 'requested {r}',
+    allLatest: 'All plugins are already up to date',
+    alreadyLatest: '"{name}" is already at the latest version ({v})',
+    checkingVersions: 'Checking plugin versions…',
+    builtinBtnTitle: 'Built-in plugin — it ships with the app and updates with it',
+    noUpdatable: 'No updatable plugins (built-ins ship with the app)',
+    checkFailedConfirm: 'Plugin versions could not be verified right now (network or version format issue). Run the full update anyway?',
     busyError: 'A plugin operation is already running.',
     confirmBusy: 'Start a new operation anyway? (current progress will be dropped)',
   },
@@ -260,6 +313,47 @@ function showError(msg) {
   $('error-banner').classList.add('visible');
   setTimeout(function () { $('error-banner').classList.remove('visible'); }, 8000);
 }
+// Transient status toast — shown for the duration of an operation, then
+// cleared. Never touches the manage-bar hint text.
+function showToast(msg) {
+  var el = $('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function clearToast() {
+  $('toast').classList.remove('visible');
+}
+// In-page modal dialogs. Native window.alert/confirm are not rendered by the
+// WebView2 host (they vanish silently; confirm resolves true and the action
+// runs unconfirmed), so every prompt goes through this overlay instead.
+var modalOkCb = null;
+function showModal(msg, okLabel, cancelLabel, onOk) {
+  $('modal-msg').textContent = msg;
+  var okBtn = $('modal-ok'), cancelBtn = $('modal-cancel');
+  okBtn.textContent = okLabel || T.ok;
+  if (cancelLabel === null) {
+    cancelBtn.style.display = 'none';
+  } else {
+    cancelBtn.style.display = '';
+    cancelBtn.textContent = cancelLabel || T.cancel;
+  }
+  modalOkCb = onOk || null;
+  $('modal-overlay').classList.add('visible');
+  okBtn.focus();
+}
+function hideModal() {
+  $('modal-overlay').classList.remove('visible');
+  modalOkCb = null;
+}
+function showAlert(msg) {
+  showModal(msg, T.ok, null, hideModal);
+}
+function confirmModal(msg, onOk) {
+  showModal(msg, T.ok, T.cancel, function () {
+    hideModal();
+    onOk();
+  });
+}
 function esc(s) {
   return String(s).replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -288,19 +382,48 @@ function renderList(plugins) {
     var sub = [];
     if (p.version && p.version !== p.requested) sub.push(T.versionLabel.replace('{v}', p.version));
     sub.push(T.requestedLabel.replace('{r}', p.requested));
+    // Version badges are all point-in-time snapshots and go stale, so none
+    // are rendered. Built-in rows (no registry-check coverage) get a disabled
+    // update button with an explanatory tooltip instead of an alert on click.
+    var updatable = outdatedMap[p.name] !== undefined;
     return '<div class="plugin">' +
       '<div class="meta"><div class="name">' + esc(p.name) + badges + '</div>' +
       '<div class="sub">' + esc(sub.join(' · ')) + '</div></div>' +
       '<div class="actions">' +
-      '<button data-act="update" data-name="' + esc(p.name) + '" class="ghost">' + esc(T.update) + '</button>' +
+      '<button data-act="update" data-name="' + esc(p.name) + '" class="ghost"' +
+        (updatable ? '' : ' disabled title="' + esc(T.builtinBtnTitle) + '"') + '>' + esc(T.update) + '</button>' +
       '<button data-act="remove" data-name="' + esc(p.name) + '" class="danger">' + esc(T.remove) + '</button>' +
       '</div></div>';
   }).join('');
 }
+// Outdated info from the registry sidecar check: name -> {latest, outdated}.
+// outdated === true → update available, false → already latest, null → unknown
+// (offline / range version / bundled) — unknown rows keep plain-update behavior.
+var outdatedMap = {};
+var listedNames = [];
+var listedPlugins = [];
 function refreshList() {
-  api('/_desktop/plugin/list').then(function (body) {
-    renderList(body.plugins);
+  Promise.all([
+    api('/_desktop/plugin/list'),
+    api('/_desktop/plugin/outdated').catch(function () { return { plugins: [] }; }),
+  ]).then(function (r) {
+    outdatedMap = {};
+    listedNames = [];
+    (r[1].plugins || []).forEach(function (o) { outdatedMap[o.name] = o; });
+    (r[0].plugins || []).forEach(function (p) { listedNames.push(p.name); });
+    listedPlugins = r[0].plugins || [];
+    renderList(listedPlugins);
   }).catch(function (e) { showError(e.message); });
+}
+// Fresh version check against the registry (?refresh=1 bypasses the backend
+// TTL cache) — called right before update actions so the "already latest"
+// decision is made on current data, never on a stale page-load snapshot.
+function checkVersions() {
+  return api('/_desktop/plugin/outdated?refresh=1').then(function (r) {
+    outdatedMap = {};
+    (r.plugins || []).forEach(function (o) { outdatedMap[o.name] = o; });
+    renderList(listedPlugins);
+  });
 }
 
 // -- jobs ------------------------------------------------------------------
@@ -308,6 +431,9 @@ function refreshList() {
 // UI updates (SSE events, buttons) to the tab the operation started in.
 var currentJobId = null;
 var currentJobTab = null;
+// Update-All runs one serialized job per outdated plugin, so already-latest
+// plugins are skipped in effect (no pnpm invocation at all).
+var pendingUpdates = [];
 function jobEls() {
   var t = currentJobTab === 'install' ? 'install' : 'manage';
   return {
@@ -347,17 +473,37 @@ function onJobDone(ev) {
     setJobState(T.done.replace('{action}', d.id.split('-')[0]).replace('{spec}', ''), 'done');
     showRestartHint(true);
     refreshList();
+    // Update-All queue: keep going through the outdated-only names.
+    if (pendingUpdates.length > 0) {
+      var next = pendingUpdates.shift();
+      setTimeout(function () { startJob('update', { name: next, restart: false }, 'manage'); }, 350);
+    }
   } else if (d.status === 'canceled') {
+    pendingUpdates = [];
     setJobState(T.canceled, 'error');
   } else {
+    pendingUpdates = [];
     setJobState(T.error.replace('{msg}', d.error || 'unknown'), 'error');
   }
 }
 function startJob(act, payload, tab) {
   if (currentJobId) {
-    if (!window.confirm(T.confirmBusy)) return;
-    api('/_desktop/plugin/cancel/' + encodeURIComponent(currentJobId)).catch(function () {});
+    // Confirm before dropping the running job — in-page modal (native
+    // confirm would silently resolve and the new job would never start).
+    // The replacement starts only after the cancel response lands, so the
+    // single-slot gate cannot race the new job into a 409.
+    confirmModal(T.confirmBusy, function () {
+      api('/_desktop/plugin/cancel/' + encodeURIComponent(currentJobId)).then(function () {
+        startJobInner(act, payload, tab);
+      }).catch(function () {
+        startJobInner(act, payload, tab);
+      });
+    });
+    return;
   }
+  startJobInner(act, payload, tab);
+}
+function startJobInner(act, payload, tab) {
   currentJobTab = tab;
   var els = jobEls();
   els.progress.classList.add('visible');
@@ -418,11 +564,48 @@ $('tab-btn-manage').addEventListener('click', function () { switchTab('manage');
 $('install').addEventListener('click', function () {
   var spec = $('spec').value.trim();
   if (!spec) return;
-  if (!window.confirm(T.installPrompt)) return;
-  startJob('install', { spec: spec, restart: false }, 'install');
+  confirmModal(T.installPrompt, function () {
+    startJob('install', { spec: spec, restart: false }, 'install');
+  });
 });
 $('update-all').addEventListener('click', function () {
-  startJob('update', { restart: false }, 'manage');
+  showToast(T.checkingVersions);
+  setBusy(true);
+  checkVersions().catch(function () { /* keep the old snapshot */ }).then(function () {
+    setBusy(false);
+    clearToast();
+    // Only plugins the registry check covers are update targets. Built-in /
+    // bundled layers ship with the app (no independent version to compare or
+    // to update) — they must not trigger a fallback full update.
+    var updatable = listedNames.filter(function (n) { return outdatedMap[n] !== undefined; });
+    var outdated = updatable.filter(function (n) { return outdatedMap[n].outdated === true; });
+    if (outdated.length > 0) {
+      // Skip already-latest plugins: only the outdated ones are queued, each
+      // as its own serialized job, so nothing is invoked for current versions.
+      pendingUpdates = outdated.slice(1);
+      startJob('update', { name: outdated[0], restart: false }, 'manage');
+      return;
+    }
+    if (updatable.length === 0) {
+      showAlert(T.noUpdatable);
+      return;
+    }
+    var unknown = updatable.filter(function (n) {
+      return outdatedMap[n].outdated === null || outdatedMap[n].outdated === undefined;
+    });
+    if (unknown.length > 0) {
+      // Versions could not be verified (offline / range version). Ask before
+      // falling back to the plain full update — pnpm itself no-ops anything
+      // already current, but the user should know nothing was verified.
+      confirmModal(T.checkFailedConfirm, function () {
+        startJob('update', { restart: false }, 'manage');
+      });
+      return;
+    }
+    // Every plugin verifiably at the latest — nothing to run (no job, so no
+    // restart button appears either).
+    showAlert(T.allLatest);
+  });
 });
 document.querySelectorAll('.cancel-job').forEach(function (btn) {
   btn.addEventListener('click', function () {
@@ -435,16 +618,50 @@ document.querySelectorAll('.restart-now').forEach(function (btn) {
 $('close').addEventListener('click', function () {
   api('/_desktop/dialog/close', { method: 'POST', body: { kind: 'plugins' } }).catch(function () {});
 });
+$('modal-ok').addEventListener('click', function () {
+  var cb = modalOkCb;
+  if (cb) cb();
+});
+$('modal-cancel').addEventListener('click', hideModal);
 $('list').addEventListener('click', function (ev) {
   var btn = ev.target.closest('button[data-act]');
   if (!btn || btn.disabled) return;
   var name = btn.getAttribute('data-name');
   var act = btn.getAttribute('data-act');
-  var ok = act === 'update'
-    ? window.confirm(T.updatePrompt.replace('{name}', name))
-    : window.confirm(T.removePrompt.replace('{name}', name));
-  if (!ok) return;
-  startJob(act, { name: name, restart: false }, 'manage');
+  if (act === 'remove') {
+    confirmModal(T.removePrompt.replace('{name}', name), function () {
+      startJob('remove', { name: name, restart: false }, 'manage');
+    });
+    return;
+  }
+  // Built-in / bundled rows ship with the app — their update button is
+  // rendered disabled (tooltip explains why), so they never reach here.
+  // Update: check versions against the registry first (fresh). Already at the
+  // latest → inform and run nothing; behind → confirm and update; unknown
+  // (offline) → keep the plain-update fallback.
+  showToast(T.checkingVersions);
+  setBusy(true);
+  checkVersions().catch(function () { /* keep the old snapshot */ }).then(function () {
+    setBusy(false);
+    clearToast();
+    var o = outdatedMap[name];
+    if (o && o.outdated === false && o.latest) {
+      showAlert(T.alreadyLatest.replace('{name}', name).replace('{v}', o.latest));
+      return;
+    }
+    // Make the pending action explicit: show the exact version move when the
+    // check succeeded, and say plainly when it did not (offline) instead of
+    // silently running pnpm.
+    var msg = T.updatePrompt.replace('{name}', name);
+    if (o && o.outdated === true && o.latest) {
+      msg = T.updatePromptTo.replace('{name}', name).replace('{from}', o.current).replace('{to}', o.latest);
+    } else if (!o || o.latest === null) {
+      msg = T.updatePromptUnverified.replace('{name}', name);
+    }
+    confirmModal(msg, function () {
+      startJob('update', { name: name, restart: false }, 'manage');
+    });
+  });
 });
 $('spec').addEventListener('keydown', function (ev) {
   if (ev.key === 'Enter') $('install').click();

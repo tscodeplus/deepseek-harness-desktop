@@ -332,6 +332,15 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
         "/restart-service" => {
             // Error-window "Restart Service" button: same entry point as the
             // tray menu (sidecar::restart).
+            // The plugin-manager window URL pins the current sidecar control
+            // port, which changes on restart — close the window here (the
+            // page's own "Restart Service" button hits this route) instead of
+            // leaving it stuck against the dead port. The main window reloads
+            // itself once the service recovers (reload_main_on_recover).
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                crate::windows::close_dialog_window(&app2, "plugins");
+            });
             let state = app.state::<Arc<SidecarState>>();
             let snapshot = crate::sidecar::take_snapshot(&state);
             if snapshot.kind != StatusKind::Stopped {

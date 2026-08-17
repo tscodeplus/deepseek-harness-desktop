@@ -14,6 +14,8 @@ import {
   getPluginManager,
   getPluginPageHtml,
   parseProfilePackage,
+  resolveLatestStatus,
+  shouldCheckVersion,
   shimContents,
   validateName,
   validateSpec,
@@ -130,6 +132,45 @@ describe('validateSpec / validateName', () => {
     expect(validateName('lodash@1.0.0')).not.toBeNull();
     expect(validateName('-p')).not.toBeNull();
     expect(validateName('a b')).not.toBeNull();
+  });
+});
+
+describe('resolveLatestStatus', () => {
+  it('flags a plugin whose installed version is behind the registry latest', () => {
+    expect(resolveLatestStatus('1.2.3', '1.3.0')).toEqual({ latest: '1.3.0', outdated: true });
+    // prerelease-aware compare: rc/beta tags rank below their stable.
+    expect(resolveLatestStatus('0.1.0-rc1', '0.1.0')).toEqual({ latest: '0.1.0', outdated: true });
+  });
+
+  it('treats an installed version at or above latest as up to date', () => {
+    expect(resolveLatestStatus('1.3.0', '1.3.0')).toEqual({ latest: '1.3.0', outdated: false });
+    expect(resolveLatestStatus('2.0.0', '1.3.0')).toEqual({ latest: '1.3.0', outdated: false });
+  });
+
+  it('is unknown (null) when the registry lookup failed', () => {
+    expect(resolveLatestStatus('1.2.3', null)).toEqual({ latest: null, outdated: null });
+  });
+
+  it('is unknown when the installed "version" is a semver range, not a plain version', () => {
+    // The row falls back to the requested range when node_modules is absent —
+    // "^1.2.0" cannot be compared, so callers must not skip the update.
+    expect(resolveLatestStatus('^1.2.0', '1.3.0')).toEqual({ latest: '1.3.0', outdated: null });
+  });
+});
+
+describe('shouldCheckVersion', () => {
+  it('checks any row with a real installed version — bundled included', () => {
+    // Regression: checkOutdated used to filter !bundled, so a profile whose
+    // plugins are all bundled layers (the default web profile) never got a
+    // version check — "update" ran unconditionally with no "already latest"
+    // prompt. Bundled rows carry real versions from node_modules.
+    expect(shouldCheckVersion({ name: '@deepseek-ai/dsh-base', requested: '^0.1.0', version: '0.1.4', bundled: true, preset: true })).toBe(true);
+    expect(shouldCheckVersion({ name: 'plain', requested: '^1.0.0', version: '1.0.1', bundled: false, preset: false })).toBe(true);
+  });
+
+  it('skips rows without a comparable version (bundles-only entries, empty)', () => {
+    expect(shouldCheckVersion({ name: '@deepseek-ai/dsh-base', requested: '', version: '', bundled: true, preset: true })).toBe(false);
+    expect(shouldCheckVersion({ name: 'ranged', requested: '^1.0.0', version: '^1.0.0', bundled: false, preset: false })).toBe(false);
   });
 });
 
@@ -313,5 +354,64 @@ describe('plugin manager page', () => {
     expect(html).toContain('data-tab="install"');
     expect(html).toContain('data-tab="manage"');
     expect(html).toContain('e instanceof TypeError');
+  });
+
+  it('replaces native alert/confirm with an in-page modal (WebView2 hosts never render them)', () => {
+    const html = getPluginPageHtml()!;
+    // Regression: window.alert/confirm vanish silently in the WebView2 host
+    // (confirm resolves true), so "already latest" never showed and single
+    // updates ran straight through without the version-move prompt. Every
+    // prompt must be the overlay modal.
+    expect(html).toContain('id="modal-overlay"');
+    expect(html).toContain('function showAlert(msg)');
+    expect(html).toContain('function confirmModal(msg, onOk)');
+    expect(html).not.toContain('window.confirm(');
+    expect(html).not.toContain('window.alert(');
+    // The version-move prompt text still flows into the modal.
+    expect(html).toContain('confirmModal(msg, function () {');
+  });
+
+  it('renders no version badges at all (stale point-in-time snapshots)', () => {
+    const html = getPluginPageHtml()!;
+    // Regression: both the "latest" and "update available" badges showed the
+    // state from the last check, which goes stale the moment a new release
+    // lands (or the user upgrades elsewhere). Version decisions happen at
+    // click time, not as durable badges.
+    expect(html).not.toContain('upToDateBadge');
+    expect(html).not.toContain('updateBadge');
+    expect(html).not.toContain('badge latest');
+    expect(html).not.toContain('badge update');
+  });
+
+  it('shows transient status in a centered toast, leaving the manage-bar hint text alone', () => {
+    const html = getPluginPageHtml()!;
+    expect(html).toContain('id="toast"');
+    expect(html).toContain('showToast');
+    expect(html).toContain('clearToast');
+    // Centered over the window (user asked for middle, not top).
+    expect(html).toContain('transform: translate(-50%, -50%)');
+    // Regression: "checking versions…" used to overwrite the manage-bar hint
+    // ("当前 profile 已激活的插件层…") and never restored it reliably.
+    expect(html).not.toContain("manage-hint').textContent = T.checkingVersions");
+  });
+
+  it('makes the pending update explicit: version move when known, unverified state when not', () => {
+    const html = getPluginPageHtml()!;
+    expect(html).toContain('updatePromptTo');
+    expect(html).toContain('updatePromptUnverified');
+    expect(html).toContain("T.updatePromptTo.replace('{name}', name).replace('{from}', o.current)");
+    // The unverified path must not silently run pnpm — it asks first.
+    expect(html).toContain('else if (!o || o.latest === null)');
+  });
+
+  it('disables the update button for built-in plugins instead of running an update', () => {
+    const html = getPluginPageHtml()!;
+    expect(html).toContain('builtinBtnTitle');
+    // The row renders the update button disabled when the registry check does
+    // not cover it (built-in / bundled layers ship with the app).
+    expect(html).toContain("' disabled title=\"' + esc(T.builtinBtnTitle) + '\"'");
+    // The update-all flow must not treat built-ins as unknown-state rows that
+    // trigger a fallback full update — only registry-checked rows count.
+    expect(html).toContain('var updatable = listedNames.filter');
   });
 });

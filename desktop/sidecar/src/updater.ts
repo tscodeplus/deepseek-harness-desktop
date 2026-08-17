@@ -15,6 +15,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { marked } from 'marked';
+
 import { broadcastEvent, cachePage } from './control-server.js';
 import { loadConfig } from './config.js';
 import { getT, interpolate } from './i18n.js';
@@ -902,6 +904,7 @@ export class AppUpdater {
            font-size:13px;line-height:1.7;color:${fg};
            background:${contentBg};margin:0 12px;border-radius:8px;
            border:1px solid ${border}}
+  .content h1,.content h4{font-size:14px;font-weight:600;margin:12px 0 6px;color:${fg}}
   .content h2{font-size:14px;font-weight:600;margin:12px 0 6px;color:${fg}}
   .content h3{font-size:13px;font-weight:600;margin:10px 0 4px;color:${fg}}
   .content ul,.content ol{padding-left:20px;margin:6px 0}
@@ -913,6 +916,13 @@ export class AppUpdater {
   .content pre{background:${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'};
                padding:10px 14px;border-radius:6px;overflow-x:auto;margin:8px 0;
                font-size:12px;line-height:1.5}
+  .content blockquote{margin:6px 0;padding:2px 12px;border-left:3px solid ${border};color:${muted}}
+  .content blockquote p{margin:4px 0}
+  .content table{border-collapse:collapse;margin:8px 0;width:100%;font-size:12px}
+  .content th,.content td{border:1px solid ${border};padding:4px 8px;text-align:left}
+  .content th{background:${isDark ? 'rgba(255,255,255,0.05)' : '#f1f5f9'};font-weight:600}
+  .content hr{border:none;border-top:1px solid ${border};margin:10px 0}
+  .content img{max-width:100%;border-radius:6px}
   .content::-webkit-scrollbar{width:5px}
   .content::-webkit-scrollbar-track{background:transparent}
   .content::-webkit-scrollbar-thumb{background:${scrollThumb};border-radius:3px}
@@ -1083,69 +1093,51 @@ export class AppUpdater {
     const text = Array.isArray(notes)
       ? notes.map((n) => (typeof n === 'string' ? n : (n.note ?? ''))).join('\n')
       : String(notes);
-    const trimmed = text.trim();
-    if (!trimmed) return '';
-
-    if (/<[a-z][\s\S]*>/i.test(trimmed)) {
-      const sanitized = trimmed
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-        .replace(/<object[\s\S]*?<\/object>/gi, '')
-        .replace(/<embed[\s\S]*?>/gi, '')
-        .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
-        .replace(/\son\w+\s*=\s*'[^']*'/gi, '');
-      return sanitized.length > 3000 ? sanitized.slice(0, 3000) + '…' : sanitized;
-    }
-
-    let html = trimmed.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
-      const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return `<pre><code>${escaped}</code></pre>`;
-    });
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
-    html = html.replace(/___(.+?)___/g, '<strong><em>$1</em></strong>');
-    html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
-    html = html.replace(/(?<!_)_([^_\n]+)_(?!_)/g, '<em>$1</em>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
-    html = html.replace(/^[-*_]{3,}\s*$/gm, '<hr>');
-    html = html.replace(/((?:^[-*] .+(?:\n|$))+)/gm, (block) => {
-      const items = block
-        .trim()
-        .split('\n')
-        .map((line) => `<li>${line.replace(/^[-*] /, '')}</li>`)
-        .join('');
-      return `<ul>${items}</ul>`;
-    });
-    html = html.replace(/((?:^\d+\. .+(?:\n|$))+)/gm, (block) => {
-      const items = block
-        .trim()
-        .split('\n')
-        .map((line) => `<li>${line.replace(/^\d+\. /, '')}</li>`)
-        .join('');
-      return `<ol>${items}</ol>`;
-    });
-    const parts = html.split(/\n{2,}/);
-    html = parts
-      .map((part) => {
-        const trimmedPart = part.trim();
-        if (!trimmedPart) return '';
-        if (/^<(h[1-4]|ul|ol|pre|hr|blockquote)/.test(trimmedPart)) return trimmedPart;
-        return `<p>${trimmedPart.replace(/\n/g, '<br>')}</p>`;
-      })
-      .filter(Boolean)
-      .join('');
-
-    return html.length > 3000 ? html.slice(0, 3000) + '…' : html;
+    return mdToHtml(text);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Release-notes markdown rendering (GFM via marked — see OhMyAgent's
+// react-markdown + remark-gfm approach for the same requirement).
+// ---------------------------------------------------------------------------
+
+const RELEASE_NOTES_MAX = 3000;
+
+/** Neutralize active tags, event handlers and javascript: URLs. Not a full
+ * sanitizer (marked does not sanitize); the feed is our own GitHub Releases
+ * body, so this is defense-in-depth, not a security boundary. */
+function sanitizeReleaseHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed[\s\S]*?>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+    .replace(/href\s*=\s*["']?javascript:[^"'\s>]*["']?/gi, 'href="#"')
+    .replace(/src\s*=\s*["']?javascript:[^"'\s>]*["']?/gi, 'src=""');
+}
+
+/**
+ * Render GitHub-Flavored Markdown release notes to safe HTML. The old
+ * hand-rolled regex renderer left GFM constructs raw — blockquotes (`>`),
+ * tables (`| … |`), task lists and strikethrough appeared as literal text.
+ * marked renders those natively (gfm on by default); pure + exported for
+ * tests. Pre-rendered HTML input passes through with the same sanitization.
+ */
+export function mdToHtml(text: string): string {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return '';
+
+  let html: string;
+  if (/<[a-z][\s\S]*>/i.test(trimmed)) {
+    html = sanitizeReleaseHtml(trimmed);
+  } else {
+    html = sanitizeReleaseHtml(marked.parse(trimmed) as string);
+  }
+  return html.length > RELEASE_NOTES_MAX ? html.slice(0, RELEASE_NOTES_MAX) + '…' : html;
 }
 
 // Singleton
