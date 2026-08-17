@@ -115,6 +115,14 @@
   #error-banner { display: none; color: var(--danger); padding: 8px 12px;
     border: 1px solid var(--danger); border-radius: 10px; }
   #error-banner.visible { display: block; }
+  /* Scrollbars must follow the page theme (default is OS-theme): match the
+     updater dialog pattern — 5px, transparent track, theme-tinted thumb. */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
+  body[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); }
+  body[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
 </style>
 </head>
 <body>
