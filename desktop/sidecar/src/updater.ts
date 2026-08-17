@@ -29,16 +29,22 @@ function stripLeadingV(v: string): string {
 }
 
 /** Compare two version strings. Returns negative if a < b, 0 equal, positive if a > b.
- *  Handles beta prerelease: 2.0.0-beta3 > 2.0.0-beta2 > 2.0.0-beta > 2.0.0. */
+ *  Follows semver precedence: ANY prerelease (beta/rc/alpha — the part after
+ *  `-`) ranks below stable, so 2.0.0 > 2.0.0-rc1 > 2.0.0-beta3 >
+ *  2.0.0-beta2 > 2.0.0-beta. Previously only "beta" was recognized — rc tags
+ *  compared equal to their stable counterpart, so an rc user was never told
+ *  about the stable release of the same version. */
 export function compareVersions(a: string, b: string): number {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
   if (pa.major !== pb.major) return pa.major - pb.major;
   if (pa.minor !== pb.minor) return pa.minor - pb.minor;
   if (pa.patch !== pb.patch) return pa.patch - pb.patch;
-  if (!pa.beta && pb.beta) return 1; // stable > beta
-  if (pa.beta && !pb.beta) return -1; // beta < stable
-  if (pa.beta && pb.beta) return pa.betaNum - pb.betaNum;
+  const paPre = pa.pre.length > 0;
+  const pbPre = pb.pre.length > 0;
+  if (!paPre && pbPre) return 1; // stable > prerelease
+  if (paPre && !pbPre) return -1; // prerelease < stable
+  if (paPre && pbPre) return comparePre(pa.pre, pb.pre);
   return 0;
 }
 
@@ -46,8 +52,8 @@ interface ParsedSemver {
   major: number;
   minor: number;
   patch: number;
-  beta: boolean;
-  betaNum: number;
+  /** Prerelease identifiers, e.g. ['beta', '2'] for 2.0.0-beta.2; [] = stable. */
+  pre: string[];
 }
 
 function parseSemver(v: string): ParsedSemver {
@@ -57,11 +63,29 @@ function parseSemver(v: string): ParsedSemver {
   const major = parseInt(parts[0] || '0', 10);
   const minor = parseInt(parts[1] || '0', 10);
   const patch = parseInt(parts[2] || '0', 10);
-  const prerelease = rest.join('-');
-  const betaMatch = /beta(\d*)/i.exec(prerelease);
-  const beta = betaMatch !== null;
-  const betaNum = beta ? (betaMatch![1] ? parseInt(betaMatch![1], 10) : 1) : 0;
-  return { major, minor, patch, beta, betaNum };
+  const pre = rest.join('-').split('.').filter(Boolean);
+  return { major, minor, patch, pre };
+}
+
+/** Compare prerelease identifier lists (semver §11.4.3): dot-separated,
+ *  numeric identifiers below alphanumeric ones, compared left to right,
+ *  shorter list ranks lower. */
+function comparePre(a: string[], b: string[]): number {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (i >= a.length) return -1; // shorter list is lower
+    if (i >= b.length) return 1;
+    const x = a[i];
+    const y = b[i];
+    if (x === y) continue;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) return parseInt(x, 10) - parseInt(y, 10);
+    if (xn) return -1; // numeric identifiers sort below alphanumeric
+    if (yn) return 1;
+    return x < y ? -1 : 1; // lexicographic: alpha < beta < rc
+  }
+  return 0;
 }
 
 /** Minimal YAML parser for latest.yml format (flat key: value + array of objects). */

@@ -15,7 +15,25 @@ describe('compareVersions', () => {
 
   it('orders beta numbers', () => {
     expect(compareVersions('2.0.0-beta3', '2.0.0-beta2')).toBeGreaterThan(0);
-    expect(compareVersions('2.0.0-beta', '2.0.0-beta1')).toBe(0);
+    // Semver precedence: a shorter identifier list ranks lower
+    // (2.0.0-beta < 2.0.0-beta1 < 2.0.0-beta2).
+    expect(compareVersions('2.0.0-beta', '2.0.0-beta1')).toBeLessThan(0);
+  });
+
+  it('treats rc as a prerelease below its stable counterpart', () => {
+    // Regression: rc was parsed as stable (only "beta" was recognized), so
+    // compareVersions('0.1.0-rc1', '0.1.0') returned 0 and an rc user was
+    // never told about the stable release of the same version.
+    expect(compareVersions('0.1.0-rc1', '0.1.0')).toBeLessThan(0);
+    expect(compareVersions('0.1.0', '0.1.0-rc1')).toBeGreaterThan(0);
+  });
+
+  it('orders prerelease kinds: alpha < beta < rc', () => {
+    expect(compareVersions('0.1.0-beta2', '0.1.0-rc1')).toBeLessThan(0);
+    expect(compareVersions('0.1.0-alpha1', '0.1.0-beta1')).toBeLessThan(0);
+    expect(compareVersions('0.1.0-rc1', '0.1.0-rc2')).toBeLessThan(0);
+    // Dot-separated identifiers: 2.0.0-beta.9 < 2.0.0-beta.10 numerically.
+    expect(compareVersions('2.0.0-beta.9', '2.0.0-beta.10')).toBeLessThan(0);
   });
 
   it('strips a leading v/V prefix', () => {
