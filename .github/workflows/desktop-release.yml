@@ -131,6 +131,15 @@ jobs:
           path: desktop/.sidecar-deps/runtime
           key: node-${{ matrix.bundle_platform }}-${{ hashFiles('desktop/.node-version') }}
 
+      # pnpm is a pure-JS tarball (one artifact serves every platform), so
+      # the key deliberately omits bundle_platform — the first platform's
+      # download feeds the others.
+      - name: Cache bundled pnpm
+        uses: actions/cache@v5
+        with:
+          path: desktop/.sidecar-deps/pnpm
+          key: pnpm-${{ hashFiles('desktop/pnpm-version.json') }}
+
       - name: Cache tauri bundler tools (NSIS toolchain)
         if: runner.os == 'Windows'
         uses: actions/cache@v5

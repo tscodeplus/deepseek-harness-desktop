@@ -78,12 +78,27 @@ function main() {
 
   const destName = key === 'win32-x64' ? 'node.exe' : 'node';
   const dest = path.join(OUT_DIR, destName);
-  // Cache: the bundled runtime only changes when .node-version changes —
-  // skip the download+extract when the target binary already exists (each
-  // build was re-downloading the ~27MB archive, the single biggest waste).
-  if (fs.existsSync(dest)) {
+  // Version-aware cache: the bundled runtime only changes when .node-version
+  // changes, so skip the download+extract when the target binary exists AND
+  // its marker matches the pinned version. The marker closes a trap — bumping
+  // .node-version without clearing .sidecar-deps used to keep bundling the
+  // OLD runtime silently.
+  const markerPath = path.join(OUT_DIR, '.node-version');
+  let markerMatches = false;
+  if (fs.existsSync(markerPath)) {
+    try {
+      markerMatches = fs.readFileSync(markerPath, 'utf8').trim() === version;
+    } catch {
+      /* unreadable marker → redownload */
+    }
+  }
+  if (fs.existsSync(dest) && markerMatches) {
     console.log(`[fetch-node] ✓ cached ${dest} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
     return;
+  }
+  if (fs.existsSync(dest)) {
+    console.log(`[fetch-node] pinned version changed (${version}) — re-downloading`);
+    fs.rmSync(OUT_DIR, { recursive: true, force: true });
   }
 
   const mirror = process.env.NODE_MIRROR || 'https://npmmirror.com/mirrors/node';
@@ -127,6 +142,7 @@ function main() {
   if (process.platform !== 'win32') {
     fs.chmodSync(dest, 0o755);
   }
+  fs.writeFileSync(markerPath, version + '\n');
   console.log(`[fetch-node] ✓ ${dest} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
 }
 
