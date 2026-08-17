@@ -97,6 +97,15 @@ function Invoke-Cmd([string]$command, [string]$cwd) {
     }
 }
 
+# Canonical installer lookup: newest NSIS setup in the bundle dir. Shared by
+# the rename step (Invoke-TauriBuild) and the summary (Write-Summary) so the
+# two can never drift apart.
+function Get-LatestInstaller {
+    Get-ChildItem "$DesktopDir\src-tauri\target\release\bundle\nsis\*.exe" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+}
+
 # ---------------------------------------------------------------------------
 # Prerequisite checks
 # ---------------------------------------------------------------------------
@@ -118,19 +127,24 @@ function Check-Prerequisites {
         $errors += "Node.js not found. Install from https://nodejs.org/"
     }
 
-    # pnpm (11.x — matches dsh's packageManager)
-    try {
-        Push-Location C:\
-        $pnpmRaw = pnpm --version 2>&1 | Out-String
-        Pop-Location
-        $pnpmVer = ($pnpmRaw -split "`n" | Where-Object { $_ -match '^\d+\.\d+\.\d+' } | Select-Object -First 1).Trim()
-        if ($pnpmVer) {
+    # pnpm (11.x — matches dsh's packageManager). Look for the .cmd shim
+    # (npm global also ships pnpm.ps1, but cmd /c can't run .ps1 — it may
+    # even hang on the "how do you want to open this file" dialog), fall
+    # back to pnpm.exe. Run it via cmd /c from a local cwd: executing a
+    # .cmd directly from a UNC working directory (powershell.exe invoked
+    # from WSL) fails because cmd.exe rejects UNC cwds — the old code
+    # worked around that with a Push-Location C:\ hack.
+    $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $pnpm) { $pnpm = Get-Command pnpm.exe -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    if ($pnpm) {
+        $r = Invoke-Cmd "`"$($pnpm.Source)`" --version" $env:TEMP
+        $pnpmVer = ($r.Output -split "`n" | Where-Object { $_ -match '^\d+\.\d+\.\d+' } | Select-Object -First 1).Trim()
+        if ($r.Success -and $pnpmVer) {
             Write-OK "pnpm v$pnpmVer"
         } else {
             $errors += "pnpm not found. Install with: npm install -g pnpm@11"
         }
-    } catch {
-        Pop-Location -ErrorAction SilentlyContinue
+    } else {
         $errors += "pnpm not found. Install with: npm install -g pnpm@11"
     }
 
@@ -243,11 +257,22 @@ function Invoke-SyncCode {
     Write-Info "Source: $WslSourcePath"
     Write-Info "Target: $WinTargetPath (WSL: $wslTarget)"
 
-    # Use git ls-files (respects .gitignore) to build the file list, then rsync.
-    # All exclusions are now in .gitignore — no manual exclude list to maintain.
-    # .git directory is intentionally excluded (not needed for desktop builds).
-    $rsyncCmd = "cd '$WslSourcePath' && git ls-files -z --cached --others --exclude-standard | rsync -av --delete --files-from=- --from0 --exclude='.git' ./ '$wslTarget'"
-    Write-Info "Running: wsl bash -c 'git ls-files ... | rsync --files-from ...'"
+    # rsync with an explicit --exclude list — the same contract as AGENTS.md
+    # ("Syncing Code to Windows"). Do NOT switch back to `git ls-files ... |
+    # rsync --delete --files-from=-`: with --files-from, --delete also removes
+    # target-side files inside every directory the list touches — that deletes
+    # node_modules/.sidecar-deps/src-tauri/target on Windows and forces a full
+    # re-fetch of everything. Excluding the artifact dirs explicitly is the
+    # only way --delete stays safe. .git is excluded (not needed for builds);
+    # .codegraph too — its unix socket (daemon.sock) can't be written on
+    # drvfs and makes rsync exit with code 23.
+    $rsyncCmd = "cd '$WslSourcePath' && rsync -av --delete " +
+        "--exclude='node_modules' --exclude='dist' --exclude='.dsh-build' " +
+        "--exclude='.sidecar-deps' --exclude='src-tauri/target' " +
+        "--exclude='coverage' --exclude='.env' --exclude='*.log' " +
+        "--exclude='.git' --exclude='.codegraph' " +
+        "./ '$wslTarget'"
+    Write-Info "Running: wsl bash -c 'rsync -av --delete --exclude=...'"
 
     $prevEA = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -396,6 +421,22 @@ function Invoke-NodeRuntime {
 }
 
 # ---------------------------------------------------------------------------
+# Bundled pnpm (plugin management runs `dsh plugin` which spawns pnpm)
+# ---------------------------------------------------------------------------
+
+function Invoke-FetchPnpm {
+    Write-Step "Fetching bundled pnpm (desktop/pnpm-version.json)"
+
+    $r = Invoke-Cmd "node scripts/fetch-pnpm.cjs" $DesktopDir
+    if (-not $r.Success) {
+        Write-Fail "pnpm download failed"
+        Write-Host $r.Output
+        throw "fetch-pnpm failed"
+    }
+    Write-OK $r.Output
+}
+
+# ---------------------------------------------------------------------------
 # Tauri build (NSIS installer + exe in src-tauri/target/release)
 # ---------------------------------------------------------------------------
 
@@ -414,7 +455,7 @@ function Invoke-TauriBuild {
     # DeepSeek Harness_<v>_x64-setup.exe. Rename to the canonical
     # DeepSeek-Harness-Desktop-Setup-<v>.exe so the updater's latest.yml URL
     # keeps working, then write latest.yml next to it.
-    $setup = Get-ChildItem "$DesktopDir\src-tauri\target\release\bundle\nsis\DeepSeek Harness_*_x64-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $setup = Get-LatestInstaller
     if ($setup) {
         $version = (Get-Content "$DesktopDir\package.json" | ConvertFrom-Json).version
         # Rename-Item never overwrites an existing target, even with -Force —
@@ -454,10 +495,10 @@ function Write-Summary {
         Write-Host "  EXE (portable): src-tauri\target\release\dsh-desktop.exe  (${exeSize} MB)" -ForegroundColor White
     }
 
-    $setupExe = Get-ChildItem "$DesktopDir\src-tauri\target\release\bundle\nsis\*.exe" -Name -ErrorAction SilentlyContinue | Sort-Object | Select-Object -Last 1
+    $setupExe = Get-LatestInstaller
     if ($setupExe) {
-        $setupSize = [math]::Round((Get-Item "$DesktopDir\src-tauri\target\release\bundle\nsis\$setupExe").Length / 1MB, 1)
-        Write-Host "  NSIS:     src-tauri\target\release\bundle\nsis\$setupExe  (${setupSize} MB)" -ForegroundColor White
+        $setupSize = [math]::Round($setupExe.Length / 1MB, 1)
+        Write-Host "  NSIS:     src-tauri\target\release\bundle\nsis\$($setupExe.Name)  (${setupSize} MB)" -ForegroundColor White
     }
 
     Write-Host ""
@@ -500,6 +541,11 @@ if ($SyncOnly) {
     exit 0
 }
 
+# Version check must run after sync (the synced files are what gets built)
+# and before fetch-dsh — the slowest step — so a mismatch fails fast instead
+# of burning several minutes on fetch+build first.
+Invoke-VersionCheck
+
 if ($Clean) {
     if ($SkipClean) {
         Write-Step "Skipping clean (-SkipClean)"
@@ -514,11 +560,11 @@ if (-not $SkipFetchDsh) {
     Write-Step "Skipping dsh fetch/build (-SkipFetchDsh)"
 }
 
-Invoke-VersionCheck
 Invoke-DesktopDeps
 Invoke-BundleDeps
 Invoke-SidecarBuild
 Invoke-NodeRuntime
+Invoke-FetchPnpm
 
 if ($Portable -or $Nsis) {
     Invoke-TauriBuild
