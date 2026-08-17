@@ -107,7 +107,26 @@ async function main() {
     check('CLI --version', false, String(e.message || e));
   }
 
-  // 3. dsh web startup + WebUI.
+  // 3. Bundled pnpm (plugin management runs `dsh plugin` which spawns pnpm).
+  const pnpmEntry = path.join(DESKTOP, '.sidecar-deps', 'pnpm', 'bin', 'pnpm.cjs');
+  check(
+    'bundled pnpm entry exists',
+    fs.existsSync(pnpmEntry),
+    pnpmEntry.replace(DESKTOP + path.sep, ''),
+  );
+  if (fs.existsSync(pnpmEntry)) {
+    try {
+      const out = execFileSync(process.execPath, [pnpmEntry, '--version'], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      check('bundled pnpm runs', /^\d+\.\d+\.\d+/.test(out.trim()), `pnpm ${out.trim()}`);
+    } catch (e) {
+      check('bundled pnpm runs', false, String(e.message || e));
+    }
+  }
+
+  // 4. dsh web startup + WebUI.
   if (await portInUse()) {
     check('port 3080 free before start', false, `127.0.0.1:${PORT} already in use — close other dsh instances`);
     process.exit(1);

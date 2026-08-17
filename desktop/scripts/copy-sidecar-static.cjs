@@ -4,6 +4,8 @@
 //                   since the installed tree has no ancestor package.json)
 //   · src/locales/ → locales/ (sidecar i18n locale files; the sidecar
 //     resolves them relative to its cwd, which is the sidecar root)
+//   · src/pages/   → pages/ (static control-API pages like the plugin
+//     manager; plugin-manager.js resolves them relative to import.meta.url)
 
 const fs = require('fs');
 const path = require('path');
@@ -17,5 +19,9 @@ fs.copyFileSync(path.join(SRC, 'package.json'), path.join(OUT, 'package.json'));
 const localesSrc = path.join(SRC, 'src', 'locales');
 if (fs.existsSync(localesSrc)) {
   fs.cpSync(localesSrc, path.join(OUT, 'locales'), { recursive: true });
+}
+const pagesSrc = path.join(SRC, 'src', 'pages');
+if (fs.existsSync(pagesSrc)) {
+  fs.cpSync(pagesSrc, path.join(OUT, 'pages'), { recursive: true });
 }
 console.log(`[copy-sidecar-static] copied ${OUT}`);

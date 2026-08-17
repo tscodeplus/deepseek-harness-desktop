@@ -14,6 +14,12 @@
 //   GET    /_desktop/pages/updater/:kind      → HTML (dialog windows — cached
 //                                                by updater.ts via cachePage,
 //                                                loaded by Rust webview windows)
+//   GET    /_desktop/plugin/list              → installed plugins (web profile)
+//   POST   /_desktop/plugin/install|remove|update  {spec|name, restart?} → {jobId}
+//   GET    /_desktop/plugin/status/:job       → { job } (running job + output)
+//   POST   /_desktop/plugin/cancel/:job       → kill the pnpm process tree
+//   POST   /_desktop/plugin/restart           → shell respawns the dsh service
+//   GET    /_desktop/pages/plugin-manager     → HTML (plugin-manager window)
 //   POST   /_desktop/shutdown                 → graceful stop + exit
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -92,7 +98,7 @@ function authorize(req: IncomingMessage, opts: ControlServerOptions): boolean {
 }
 
 /** Push to the Rust shell's control service (mirror of updater.ts shellFetch). */
-async function postToShell(pathname: string, body: unknown): Promise<void> {
+export async function postToShell(pathname: string, body: unknown): Promise<void> {
   const port = Number(process.env.DSHD_DESKTOP_CONTROL_PORT ?? 0);
   const token = process.env.DSHD_CONTROL_TOKEN ?? '';
   if (!port) return;
@@ -223,6 +229,23 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ControlSe
       return;
     }
 
+    if (path.startsWith('/_desktop/plugin/')) {
+      await handlePlugin(path, method, req, res);
+      return;
+    }
+
+    // Plugin-manager window loads this URL (see windows.rs show_plugins_window).
+    if (path === '/_desktop/pages/plugin-manager' && method === 'GET') {
+      const pluginPage = await import('./plugin-manager.js');
+      const html = pluginPage.getPluginPageHtml();
+      if (!html) {
+        text(res, 404, 'plugin manager page not found');
+        return;
+      }
+      text(res, 200, html, 'text/html; charset=utf-8');
+      return;
+    }
+
     if (path === '/_desktop/dialog/close' && method === 'POST') {
       const body = (await readJson(req)) as { kind?: string };
       const kind = typeof body?.kind === 'string' ? body.kind : '';
@@ -318,6 +341,109 @@ async function handleUpdater(
     }
   } catch (e) {
     json(res, 501, { error: `updater not available: ${e instanceof Error ? e.message : e}` });
+  }
+}
+
+// -- plugin routes (M6): `dsh plugin --profile web` wrapped for the UI ------
+
+async function handlePlugin(
+  path: string,
+  method: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const action = path.slice('/_desktop/plugin/'.length);
+  try {
+    const plugins = await import('./plugin-manager.js');
+    const manager = plugins.getPluginManager();
+
+    if (action === 'list' && method === 'GET') {
+      json(res, 200, manager.list());
+      return;
+    }
+
+    if (action === 'restart' && method === 'POST') {
+      // UI "restart now" button — ask the shell to respawn the service.
+      await postToShell('/restart-service', {});
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    if (action === 'install' && method === 'POST') {
+      const body = (await readJson(req)) as { spec?: unknown; restart?: unknown };
+      const err = plugins.validateSpec(body?.spec);
+      if (err) {
+        json(res, 400, { error: err });
+        return;
+      }
+      const started = manager.start('install', body.spec as string, body?.restart === true);
+      if ('error' in started) {
+        json(res, 409, { error: started.error });
+        return;
+      }
+      json(res, 202, { jobId: started.jobId });
+      return;
+    }
+
+    if (action === 'remove' && method === 'POST') {
+      const body = (await readJson(req)) as { name?: unknown; restart?: unknown };
+      const err = plugins.validateName(body?.name);
+      if (err) {
+        json(res, 400, { error: err });
+        return;
+      }
+      const started = manager.start('remove', body.name as string, body?.restart === true);
+      if ('error' in started) {
+        json(res, 409, { error: started.error });
+        return;
+      }
+      json(res, 202, { jobId: started.jobId });
+      return;
+    }
+
+    if (action === 'update' && method === 'POST') {
+      const body = (await readJson(req)) as { name?: unknown; restart?: unknown };
+      if (body?.name !== undefined && body?.name !== null && body.name !== '') {
+        const err = plugins.validateName(body.name);
+        if (err) {
+          json(res, 400, { error: err });
+          return;
+        }
+      }
+      const started = manager.start(
+        'update',
+        typeof body?.name === 'string' ? body.name : undefined,
+        body?.restart === true,
+      );
+      if ('error' in started) {
+        json(res, 409, { error: started.error });
+        return;
+      }
+      json(res, 202, { jobId: started.jobId });
+      return;
+    }
+
+    if (action.startsWith('status/') && method === 'GET') {
+      const id = action.slice('status/'.length);
+      const job = manager.getJob(id);
+      if (!job) {
+        json(res, 404, { error: 'job not found' });
+        return;
+      }
+      json(res, 200, { job });
+      return;
+    }
+
+    if (action.startsWith('cancel/') && method === 'POST') {
+      const id = action.slice('cancel/'.length);
+      const canceled = manager.cancel(id);
+      json(res, canceled ? 200 : 404, canceled ? { ok: true } : { error: 'job not found or not running' });
+      return;
+    }
+
+    json(res, 404, { error: `unknown plugin action: ${action}` });
+  } catch (e) {
+    json(res, 501, { error: `plugin manager not available: ${e instanceof Error ? e.message : e}` });
   }
 }
 

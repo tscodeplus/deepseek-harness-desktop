@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev:sidecar",
     "devUrl": "http://127.0.0.1:3080",
-    "beforeBuildCommand": "pnpm fetch:dsh && node scripts/fetch-node.cjs && pnpm bundle-deps && pnpm build:sidecar",
+    "beforeBuildCommand": "pnpm fetch:dsh && node scripts/fetch-node.cjs && node scripts/fetch-pnpm.cjs && pnpm bundle-deps && pnpm build:sidecar",
     "frontendDist": "../../ui"
   },
   "app": {
@@ -27,6 +27,7 @@
     "resources": {
       "../.sidecar-deps/dsh-dist": "sidecar/dsh-dist",
       "../.sidecar-deps/node_modules": "sidecar/node_modules",
+      "../.sidecar-deps/pnpm": "sidecar/pnpm",
       "../.sidecar-deps/root": "sidecar",
       "../.sidecar-deps/runtime": "sidecar"
     },

@@ -18,6 +18,7 @@ const ID_TOGGLE: &str = "toggle-window";
 const ID_STATUS: &str = "status";
 const ID_RESTART_SERVICE: &str = "restart-service";
 const ID_OPEN_DATA: &str = "open-data-dir";
+const ID_PLUGINS: &str = "plugins";
 const ID_AUTO_START: &str = "auto-start";
 const ID_CLOSE_TO_TRAY: &str = "close-to-tray";
 const ID_RESTART_APP: &str = "restart-app";
@@ -105,6 +106,16 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
         None::<&str>,
     )?;
     menu.append(&open_data)?;
+
+    let plugins = MenuItem::with_id(
+        app,
+        ID_PLUGINS,
+        tr("安装 / 管理插件", "Install / Manage Plugins", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&plugins)?;
+
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     let auto_start = CheckMenuItem::with_id(
@@ -182,6 +193,11 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             // desktop-config.json) lives under the upstream dsh home `~/.dsh`.
             let cfg = crate::config::ShellConfig::load(app);
             open_path(app, &cfg.data_dir);
+        }
+        ID_PLUGINS => {
+            if let Err(e) = crate::windows::show_plugins_window(app) {
+                log::error!("tray: show_plugins_window failed: {e}");
+            }
         }
         ID_AUTO_START => toggle_auto_start(app),
         ID_CLOSE_TO_TRAY => toggle_close_to_tray(app),

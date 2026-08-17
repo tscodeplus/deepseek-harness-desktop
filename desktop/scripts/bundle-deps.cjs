@@ -850,7 +850,8 @@ function main() {
 
   // 1. Clean and recreate staging
   // Clear staging subdirs but keep `.sidecar-deps/runtime` (bundled Node
-  // runtime, fetched separately — wiping it would force a re-download).
+  // runtime, fetched separately — wiping it would force a re-download) and
+  // `.sidecar-deps/pnpm` (bundled pnpm, fetched by fetch-pnpm.cjs).
   fs.rmSync(path.join(STAGING, 'node_modules'), { recursive: true, force: true });
   fs.rmSync(path.join(STAGING, 'root'), { recursive: true, force: true });
   fs.mkdirSync(STAGING_NM, { recursive: true });

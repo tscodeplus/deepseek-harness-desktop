@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugins</title>
+<style>
+  :root {
+    --bg: #fafafc; --fg: #1e2430; --muted: #667085; --border: #e6e8ee;
+    --btn: #3b5bdb; --btn-hover: #364fc7; --btn-text: #fff; --danger: #d64545;
+    --chip-bg: #eef1f6; --link: #3b5bdb; --input-bg: #fff; --ok: #2f9e44;
+  }
+  body[data-theme="dark"] {
+    --bg: #14141f; --fg: #e6e6f0; --muted: #a6adc0; --border: #2a2b3d;
+    --btn: #4f8cff; --btn-hover: #6b9cff; --btn-text: #fff; --danger: #e06666;
+    --chip-bg: #22233a; --link: #7aa2ff; --input-bg: #1c1c2b; --ok: #69db7c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--fg); font-size: 13px;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); flex: none;
+  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  .close-btn {
+    background: none; border: none; color: var(--muted); font-size: 16px;
+    cursor: pointer; padding: 2px 8px; border-radius: 6px;
+  }
+  .close-btn:hover { background: var(--chip-bg); color: var(--fg); }
+  .tabs {
+    display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); flex: none;
+  }
+  .tabs button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    padding: 7px 14px; font-size: 13px; border-radius: 8px 8px 0 0;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button:hover { color: var(--fg); background: var(--chip-bg); }
+  .tabs button.active { color: var(--btn); border-bottom-color: var(--btn); font-weight: 600; }
+  main { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .tab-page { display: none; flex-direction: column; gap: 14px; }
+  .tab-page.active { display: flex; }
+  .install-row { display: flex; gap: 8px; }
+  .install-row input {
+    flex: 1; background: var(--input-bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+  }
+  .install-row input:focus { outline: none; border-color: var(--btn); }
+  .install-row input::placeholder { color: var(--muted); }
+  .install-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .manage-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 2px;
+  }
+  .manage-bar .hint { color: var(--muted); font-size: 12px; flex: 1; min-width: 0; }
+  #update-all { flex: none; white-space: nowrap; }
+  button {
+    background: var(--btn); color: var(--btn-text); border: none;
+    border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: var(--btn-hover); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: var(--chip-bg); color: var(--fg); }
+  button.ghost:hover { filter: brightness(.96); }
+  /* In dark mode the chip background nearly blends into the window background
+     and var(--border) is barely visible — give ghost/danger buttons an actual
+     outline so "Update All / Update / Remove" stay identifiable. Light mode
+     is untouched. */
+  body[data-theme="dark"] button.ghost { border: 1px solid #3d3f58; }
+  button.danger { background: transparent; color: var(--danger); border: 1px solid var(--border); }
+  body[data-theme="dark"] button.danger { border-color: rgba(224, 102, 102, 0.45); }
+  button.danger:hover { background: var(--chip-bg); border-color: var(--danger); }
+  .empty { color: var(--muted); text-align: center; padding: 24px 0; }
+  .plugin {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  }
+  .plugin .meta { flex: 1; min-width: 0; }
+  .plugin .name { font-weight: 600; word-break: break-all; }
+  .plugin .sub { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-all; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+    background: var(--chip-bg); color: var(--muted); margin-left: 6px; vertical-align: 2px;
+  }
+  .badge.preset { background: #e7f5ff; color: #1971c2; }
+  body[data-theme="dark"] .badge.preset { background: #1b3350; color: #74c0fc; }
+  .badge.bundled { background: #fff3bf; color: #997404; }
+  body[data-theme="dark"] .badge.bundled { background: #3a3200; color: #f0d95c; }
+  .actions { display: flex; gap: 6px; flex: none; }
+  /* Each tab owns its progress + restart-hint block (per-tab ids); the
+     shared id-based rules below are class-based so both instances work. */
+  .progress { display: none; border: 1px solid var(--border); border-radius: 10px; }
+  .progress.visible { display: block; }
+  .progress .head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .progress .head .state { color: var(--muted); }
+  .progress .head .state.running { color: var(--btn); }
+  .progress .head .state.error { color: var(--danger); }
+  .progress .head .state.done { color: var(--ok); }
+  .job-output {
+    margin: 0; padding: 10px 12px; max-height: 150px; overflow-y: auto;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px;
+    white-space: pre-wrap; word-break: break-all; color: var(--muted);
+  }
+  .restart-hint { display: none; align-items: center; gap: 10px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px; }
+  .restart-hint.visible { display: flex; }
+  .restart-hint .msg { flex: 1; }
+  #error-banner { display: none; color: var(--danger); padding: 8px 12px;
+    border: 1px solid var(--danger); border-radius: 10px; }
+  #error-banner.visible { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">插件</h1>
+  <button class="close-btn" id="close" title="Close" aria-label="Close">✕</button>
+</header>
+<nav class="tabs">
+  <button id="tab-btn-install" class="active">安装</button>
+  <button id="tab-btn-manage">管理</button>
+</nav>
+<main>
+  <section class="tab-page active" id="tab-install">
+    <div class="install-row">
+      <input id="spec" placeholder="e.g. @scope/pkg, pkg@1.2.3, file:../pkg, git+https://…" autocomplete="off" spellcheck="false">
+      <button id="install">安装</button>
+    </div>
+    <div class="install-hint"></div>
+    <div id="progress-install" class="progress">
+      <div class="head">
+        <span class="state" id="job-state-install">…</span>
+        <button class="ghost cancel-job" data-tab="install">取消</button>
+      </div>
+      <pre class="job-output" id="job-output-install"></pre>
+    </div>
+    <section id="restart-hint-install" class="restart-hint">
+      <span class="msg"></span>
+      <button class="restart-now" data-tab="install">立即重启服务</button>
+    </section>
+  </section>
+  <section class="tab-page" id="tab-manage">
+    <div class="manage-bar">
+      <span class="hint" id="manage-hint"></span>
+      <button id="update-all" class="ghost">全部更新</button>
+    </div>
+    <div id="list"></div>
+    <div id="progress-manage" class="progress">
+      <div class="head">
+        <span class="state" id="job-state-manage">…</span>
+        <button class="ghost cancel-job" data-tab="manage">取消</button>
+      </div>
+      <pre class="job-output" id="job-output-manage"></pre>
+    </div>
+    <section id="restart-hint-manage" class="restart-hint">
+      <span class="msg"></span>
+      <button class="restart-now" data-tab="manage">立即重启服务</button>
+    </section>
+  </section>
+  <div id="error-banner"></div>
+</main>
+<script>
+'use strict';
+// -- bootstrap -------------------------------------------------------------
+var params = new URLSearchParams(location.search);
+var token = params.get('token') || '';
+var lang = params.get('lang') === 'en' ? 'en' : 'zh-CN';
+var dark = params.get('dark') === '1';
+document.body.setAttribute('data-theme', dark ? 'dark' : 'light');
+
+var I18N = {
+  zh: {
+    title: '插件', tabInstall: '安装', tabManage: '管理', install: '安装', updateAll: '全部更新',
+    update: '更新', remove: '移除',
+    manageHint: '当前 profile 已激活的插件层（含预置）；DeepSeek Harness 设置页的插件列表是运行时全部插件（含内置），与此不同。',
+    empty: '尚未安装任何插件',
+    installHint: '安装后需重启服务才会加载新插件；重启服务后应用窗口会自动刷新。',
+    installPrompt: '确定要安装该插件吗？插件可在你的用户权限下执行安装脚本。',
+    removePrompt: '确定要移除插件 “{name}” 吗？重启后生效。',
+    updatePrompt: '确定要更新插件 “{name}” 吗？',
+    running: '正在运行：{action} {spec}',
+    done: '操作完成（{action} {spec}）',
+    error: '操作失败：{msg}',
+    canceled: '操作已取消',
+    cancel: '取消', close: '关闭',
+    restartHint: '操作完成，点击「重启服务」后生效；服务恢复时应用窗口会自动刷新。',
+    restartNow: '重启服务',
+    restarting: '正在重启服务…',
+    presetBadge: '预置', bundledBadge: '已装配',
+    versionLabel: '已装 {v}', requestedLabel: '依赖 {r}',
+    busyError: '已有插件操作正在运行，请稍候。',
+    confirmBusy: '仍要开始新的操作吗？（将覆盖当前进度）',
+  },
+  en: {
+    title: 'Plugins', tabInstall: 'Install', tabManage: 'Manage', install: 'Install', updateAll: 'Update All',
+    update: 'Update', remove: 'Remove',
+    manageHint: 'Active plugin layers of this profile (incl. presets); the DeepSeek Harness Settings → Plugins page lists every runtime plugin (incl. built-ins).',
+    empty: 'No plugins installed yet',
+    installHint: 'A service restart is needed to load a newly installed plugin; this window refreshes automatically afterwards.',
+    installPrompt: 'Install this plugin? Plugins run lifecycle scripts with your user permissions.',
+    removePrompt: 'Remove plugin "{name}"? It takes effect after a service restart.',
+    updatePrompt: 'Update plugin "{name}"?',
+    running: 'Running: {action} {spec}',
+    done: 'Done ({action} {spec})',
+    error: 'Failed: {msg}',
+    canceled: 'Canceled',
+    cancel: 'Cancel', close: 'Close',
+    restartHint: 'Operation complete — restart the service to apply; this window refreshes automatically when it recovers.',
+    restartNow: 'Restart Service',
+    restarting: 'Restarting service…',
+    presetBadge: 'Preset', bundledBadge: 'Bundled',
+    versionLabel: 'installed {v}', requestedLabel: 'requested {r}',
+    busyError: 'A plugin operation is already running.',
+    confirmBusy: 'Start a new operation anyway? (current progress will be dropped)',
+  },
+};
+// Rust passes lang=zh-CN, but the dictionary keys are zh/en — a missing key
+// made T undefined and crashed the whole script (no buttons, no list) on
+// every Chinese system. Fall back instead of trusting the query.
+var T = I18N[lang] || I18N.zh;
+
+// -- helpers ---------------------------------------------------------------
+var $ = function (id) { return document.getElementById(id); };
+function api(path, opts) {
+  opts = opts || {};
+  var sep = path.indexOf('?') >= 0 ? '&' : '?';
+  var url = path + (token ? sep + 'token=' + encodeURIComponent(token) : '');
+  return fetch(url, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+  }).then(function (r) {
+    return r.json().then(function (body) {
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      return body;
+    });
+  });
+}
+function setBusy(busy) {
+  $('install').disabled = busy;
+  $('update-all').disabled = busy;
+  document.querySelectorAll('.plugin .actions button').forEach(function (b) { b.disabled = busy; });
+}
+function showError(msg) {
+  $('error-banner').textContent = msg;
+  $('error-banner').classList.add('visible');
+  setTimeout(function () { $('error-banner').classList.remove('visible'); }, 8000);
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+// -- tabs -------------------------------------------------------------------
+function switchTab(name) {
+  $('tab-install').classList.toggle('active', name === 'install');
+  $('tab-manage').classList.toggle('active', name === 'manage');
+  $('tab-btn-install').classList.toggle('active', name === 'install');
+  $('tab-btn-manage').classList.toggle('active', name === 'manage');
+}
+
+// -- list ------------------------------------------------------------------
+function renderList(plugins) {
+  var el = $('list');
+  if (!plugins.length) {
+    el.innerHTML = '<div class="empty">' + esc(T.empty) + '</div>';
+    return;
+  }
+  el.innerHTML = plugins.map(function (p) {
+    var badges = '';
+    if (p.preset) badges += '<span class="badge preset">' + esc(T.presetBadge) + '</span>';
+    else if (p.bundled) badges += '<span class="badge bundled">' + esc(T.bundledBadge) + '</span>';
+    var sub = [];
+    if (p.version && p.version !== p.requested) sub.push(T.versionLabel.replace('{v}', p.version));
+    sub.push(T.requestedLabel.replace('{r}', p.requested));
+    return '<div class="plugin">' +
+      '<div class="meta"><div class="name">' + esc(p.name) + badges + '</div>' +
+      '<div class="sub">' + esc(sub.join(' · ')) + '</div></div>' +
+      '<div class="actions">' +
+      '<button data-act="update" data-name="' + esc(p.name) + '" class="ghost">' + esc(T.update) + '</button>' +
+      '<button data-act="remove" data-name="' + esc(p.name) + '" class="danger">' + esc(T.remove) + '</button>' +
+      '</div></div>';
+  }).join('');
+}
+function refreshList() {
+  api('/_desktop/plugin/list').then(function (body) {
+    renderList(body.plugins);
+  }).catch(function (e) { showError(e.message); });
+}
+
+// -- jobs ------------------------------------------------------------------
+// Each tab owns its progress + restart-hint block; currentJobTab routes job
+// UI updates (SSE events, buttons) to the tab the operation started in.
+var currentJobId = null;
+var currentJobTab = null;
+function jobEls() {
+  var t = currentJobTab === 'install' ? 'install' : 'manage';
+  return {
+    progress: $('progress-' + t),
+    state: $('job-state-' + t),
+    output: $('job-output-' + t),
+    cancelBtn: $('progress-' + t).querySelector('.cancel-job'),
+    restart: $('restart-hint-' + t),
+  };
+}
+function showJobOutput(html) {
+  var out = jobEls().output;
+  out.textContent += html;
+  out.scrollTop = out.scrollHeight;
+}
+function setJobState(text, cls) {
+  var s = jobEls().state;
+  s.textContent = text;
+  s.className = 'state' + (cls ? ' ' + cls : '');
+}
+function onJobUpdated(ev) {
+  var d = ev.data ? JSON.parse(ev.data) : null;
+  if (!d || d.id !== currentJobId) return;
+  jobEls().progress.classList.add('visible');
+  if (d.status === 'running') {
+    setJobState(T.running.replace('{action}', d.id.split('-')[0]).replace('{spec}', ''), 'running');
+    if (d.line && d.line !== 'done') showJobOutput(d.line + '\n');
+  }
+}
+function onJobDone(ev) {
+  var d = ev.data ? JSON.parse(ev.data) : null;
+  if (!d || d.id !== currentJobId) return;
+  setBusy(false);
+  jobEls().cancelBtn.style.display = 'none';
+  currentJobId = null;
+  if (d.status === 'done') {
+    setJobState(T.done.replace('{action}', d.id.split('-')[0]).replace('{spec}', ''), 'done');
+    showRestartHint(true);
+    refreshList();
+  } else if (d.status === 'canceled') {
+    setJobState(T.canceled, 'error');
+  } else {
+    setJobState(T.error.replace('{msg}', d.error || 'unknown'), 'error');
+  }
+}
+function startJob(act, payload, tab) {
+  if (currentJobId) {
+    if (!window.confirm(T.confirmBusy)) return;
+    api('/_desktop/plugin/cancel/' + encodeURIComponent(currentJobId)).catch(function () {});
+  }
+  currentJobTab = tab;
+  var els = jobEls();
+  els.progress.classList.add('visible');
+  els.output.textContent = '';
+  setJobState(T.running.replace('{action}', act).replace('{spec}', '…'), 'running');
+  els.cancelBtn.style.display = '';
+  setBusy(true);
+  showRestartHint(false);
+  api('/_desktop/plugin/' + act, { method: 'POST', body: payload }).then(function (body) {
+    currentJobId = body.jobId;
+  }).catch(function (e) {
+    setBusy(false);
+    els.cancelBtn.style.display = 'none';
+    setJobState(T.error.replace('{msg}', e.message), 'error');
+    if (e.message && e.message.indexOf('already running') >= 0) showError(T.busyError);
+  });
+}
+
+// -- restart hint ----------------------------------------------------------
+function showRestartHint(visible) {
+  var el = jobEls().restart;
+  if (!visible) { el.classList.remove('visible'); return; }
+  el.querySelector('.msg').textContent = T.restartHint;
+  el.classList.add('visible');
+}
+// The restart kills the sidecar mid-request: the connection drops before the
+// response can come back, so a network failure here is the *expected* outcome.
+// The shell re-points this window at the new control port once the service
+// recovers, which also clears this "restarting…" state — only a real server
+// error (JSON body) re-enables the button.
+function onRestartClick(btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = T.restarting;
+  api('/_desktop/plugin/restart', { method: 'POST' }).catch(function (e) {
+    if (e instanceof TypeError) return; // connection dropped by the restart
+    btn.disabled = false;
+    btn.textContent = T.restartNow;
+    showError(e.message);
+  });
+}
+
+// -- wire-up ---------------------------------------------------------------
+$('title').textContent = T.title;
+$('tab-btn-install').textContent = T.tabInstall;
+$('tab-btn-manage').textContent = T.tabManage;
+$('install').textContent = T.install;
+$('update-all').textContent = T.updateAll;
+$('manage-hint').textContent = T.manageHint;
+document.querySelectorAll('.cancel-job').forEach(function (btn) { btn.textContent = T.cancel; });
+document.querySelectorAll('.restart-now').forEach(function (btn) { btn.textContent = T.restartNow; });
+var installHint = $('tab-install').querySelector('.install-hint');
+installHint.textContent = T.installHint;
+
+$('tab-btn-install').addEventListener('click', function () { switchTab('install'); });
+$('tab-btn-manage').addEventListener('click', function () { switchTab('manage'); });
+
+$('install').addEventListener('click', function () {
+  var spec = $('spec').value.trim();
+  if (!spec) return;
+  if (!window.confirm(T.installPrompt)) return;
+  startJob('install', { spec: spec, restart: false }, 'install');
+});
+$('update-all').addEventListener('click', function () {
+  startJob('update', { restart: false }, 'manage');
+});
+document.querySelectorAll('.cancel-job').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    if (currentJobId) api('/_desktop/plugin/cancel/' + encodeURIComponent(currentJobId)).catch(function () {});
+  });
+});
+document.querySelectorAll('.restart-now').forEach(function (btn) {
+  btn.addEventListener('click', function () { onRestartClick(btn); });
+});
+$('close').addEventListener('click', function () {
+  api('/_desktop/dialog/close', { method: 'POST', body: { kind: 'plugins' } }).catch(function () {});
+});
+$('list').addEventListener('click', function (ev) {
+  var btn = ev.target.closest('button[data-act]');
+  if (!btn || btn.disabled) return;
+  var name = btn.getAttribute('data-name');
+  var act = btn.getAttribute('data-act');
+  var ok = act === 'update'
+    ? window.confirm(T.updatePrompt.replace('{name}', name))
+    : window.confirm(T.removePrompt.replace('{name}', name));
+  if (!ok) return;
+  startJob(act, { name: name, restart: false }, 'manage');
+});
+$('spec').addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter') $('install').click();
+});
+
+// SSE: live job progress from the sidecar control API.
+try {
+  var es = new EventSource('/_desktop/events' + (token ? '?token=' + encodeURIComponent(token) : ''));
+  es.addEventListener('plugin-job-updated', onJobUpdated);
+  es.addEventListener('plugin-job-done', onJobDone);
+} catch (e) { /* SSE unavailable — status polling not implemented; jobs still run */ }
+
+refreshList();
+</script>
+</body>
+</html>

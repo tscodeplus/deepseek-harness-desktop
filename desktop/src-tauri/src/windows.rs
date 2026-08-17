@@ -17,6 +17,7 @@ pub const SPLASH_LABEL: &str = "splash";
 pub const ERROR_LABEL: &str = "error";
 pub const PROGRESS_LABEL: &str = "updater-progress";
 pub const ABOUT_LABEL: &str = "about";
+pub const PLUGINS_LABEL: &str = "plugins";
 
 /// Upstream provenance shown in the About dialog — mirrors
 /// `desktop/dsh-ref.json` (single-mode dependency following).
@@ -451,11 +452,97 @@ pub fn close_dialog_window(app: &AppHandle, kind: &str) {
         "spinner" => "updater-spinner",
         "error" => ERROR_LABEL,
         "about" => ABOUT_LABEL,
+        "plugins" => PLUGINS_LABEL,
         _ => "updater-dialog",
     };
     if let Some(win) = app.get_webview_window(label) {
         let _ = win.close();
     }
+}
+
+/// Control-port URL for the plugin-manager page. The port and token ride in
+/// the query because the page is served by the sidecar's control API. The
+/// port CHANGES on every service restart, so this must always be rebuilt
+/// from the current state — never cache the result across a restart.
+/// Returns `(url, dark)` so callers can reuse the computed theme.
+fn plugins_window_url(app: &AppHandle, state: &SidecarState) -> Option<(String, bool)> {
+    let port = state.sidecar_api_port.load(std::sync::atomic::Ordering::SeqCst);
+    if port == 0 {
+        return None;
+    }
+    let token = state.ctl_token.clone();
+    let zh = crate::i18n::is_zh(app);
+    let lang = if zh { "zh-CN" } else { "en" };
+    let dark = match crate::config::DesktopConfig::load(&crate::config::config_path(app)).theme.as_str() {
+        "light" => false,
+        "dark" => true,
+        _ => system_dark(),
+    };
+    Some((
+        format!(
+            "http://127.0.0.1:{port}/_desktop/pages/plugin-manager?token={token}&lang={lang}&dark={}",
+            if dark { "1" } else { "0" }
+        ),
+        dark,
+    ))
+}
+
+/// Re-point an open plugin-manager window at the current sidecar control
+/// port. The window URL pins the OLD port, so after a user-initiated service
+/// restart (the page's own "restart" button, the tray, the error window) a
+/// plain reload would keep hitting the dead URL — the window must be
+/// re-navigated instead. The fresh load also clears the stuck "restarting…"
+/// state that a restart-killed in-flight request can leave behind.
+pub fn repoint_plugins_window(app: &AppHandle, state: &SidecarState) {
+    let Some(win) = app.get_webview_window(PLUGINS_LABEL) else {
+        return;
+    };
+    if !win.is_visible().unwrap_or(false) {
+        return;
+    }
+    let Some(url) = plugins_window_url(app, state).map(|(url, _)| url) else {
+        return;
+    };
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview_window(PLUGINS_LABEL) {
+            if let Err(e) = win.navigate(url.parse().expect("plugin page url")) {
+                log::error!("windows: repoint_plugins_window navigate failed: {e}");
+            }
+        }
+    });
+}
+
+/// Plugin manager window (tray → "Install / Manage Plugins"). The page is
+/// served by the sidecar control API (`/_desktop/pages/plugin-manager`), same
+/// pattern as the updater dialogs — token rides in the URL query; the page
+/// talks to the same-origin `/_desktop/plugin/*` API and receives job
+/// progress over SSE.
+pub fn show_plugins_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(win) = app.get_webview_window(PLUGINS_LABEL) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let state = app.state::<Arc<SidecarState>>();
+    let (url, dark) = plugins_window_url(app, &state).ok_or_else(|| {
+        tauri::Error::Anyhow(anyhow::anyhow!("sidecar control API not up yet"))
+    })?;
+    let zh = crate::i18n::is_zh(app);
+    log::info!("windows: show_plugins_window → {url}");
+    WebviewWindowBuilder::new(app, PLUGINS_LABEL, WebviewUrl::External(url.parse().expect("plugin page url")))
+        .title(crate::i18n::tr("插件管理", "Plugins", zh))
+        .inner_size(760.0, 560.0)
+        .resizable(false)
+        .decorations(false)
+        .background_color(tauri::window::Color::from(if dark {
+            (20, 20, 31)
+        } else {
+            (250, 250, 252)
+        }))
+        .center()
+        .build()?;
+    Ok(())
 }
 
 /// Frameless About dialog: desktop version, upstream DeepSeek Harness
@@ -542,6 +629,24 @@ fn apply_theme_about(app: &AppHandle, dark: bool) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Apply the configured theme to the plugin-manager window (chrome + the
+/// page's `data-theme` attribute). Mirrors apply_theme_about; called from
+/// apply_theme so a theme change re-themes an open window immediately.
+fn apply_theme_plugins(app: &AppHandle, dark: bool) -> tauri::Result<()> {
+    if let Some(win) = app.get_webview_window(PLUGINS_LABEL) {
+        win.set_background_color(Some(tauri::window::Color::from(if dark {
+            (20, 20, 31)
+        } else {
+            (250, 250, 252)
+        })))?;
+        let _ = win.eval(&format!(
+            "document.body.setAttribute('data-theme', '{}');",
+            if dark { "dark" } else { "light" }
+        ));
+    }
+    Ok(())
+}
+
 /// Apply the configured theme to the main window chrome: window background
 /// (prevents white flash while the page paints) and, on Windows, the native
 /// title-bar colors (DWM) so dark mode blends with the UI's dark background
@@ -553,6 +658,7 @@ pub fn apply_theme(app: &AppHandle, theme: &str) -> tauri::Result<()> {
         _ => system_dark(),
     };
     apply_theme_about(app, dark)?;
+    apply_theme_plugins(app, dark)?;
     let color = if dark {
         tauri::window::Color::from((10, 10, 10))
     } else {

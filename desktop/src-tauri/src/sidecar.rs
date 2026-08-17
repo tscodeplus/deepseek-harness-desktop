@@ -80,6 +80,12 @@ pub struct SidecarState {
     /// measured per-start, not per-shell-lifetime (restart would otherwise
     /// trip "启动超时" on the first !healthy poll after respawn).
     pub starting_at: std::sync::atomic::AtomicU64,
+    /// Set when a user-initiated "restart service" respawns the sidecar; the
+    /// health loop reloads the main window once the new service answers. The
+    /// Webview does not reload on its own when dsh web comes back under it,
+    /// so a restart (e.g. the plugin window's restart-after-install) would
+    /// otherwise leave the user staring at the stale UI.
+    pub reload_main_on_recover: std::sync::atomic::AtomicBool,
 }
 
 impl SidecarState {
@@ -196,6 +202,7 @@ pub async fn init(app: &AppHandle) {
         sidecar_api_port: std::sync::atomic::AtomicU16::new(sidecar_api_port),
         generation: std::sync::atomic::AtomicU32::new(1),
         starting_at: std::sync::atomic::AtomicU64::new(unix_millis()),
+        reload_main_on_recover: std::sync::atomic::AtomicBool::new(false),
     });
     app.manage(state.clone());
 
@@ -564,6 +571,26 @@ async fn health_loop(app: AppHandle, state: Arc<SidecarState>, server_port: u16)
                     crate::windows::reveal_main_window(&app);
 
                     crate::tray::rebuild(&app, &DesktopConfig::load(&config_path(&app)));
+
+                    // User-initiated restart: the main window was already
+                    // visible under the old page — reload it so the fresh
+                    // service (and any plugin changes) is what the user sees.
+                    if state
+                        .reload_main_on_recover
+                        .swap(false, std::sync::atomic::Ordering::SeqCst)
+                    {
+                        if let Some(win) = app.get_webview_window(crate::windows::MAIN_LABEL) {
+                            if win.is_visible().unwrap_or(false) {
+                                let _ = win.reload();
+                            }
+                        }
+                        // The plugin-manager window pins the sidecar control
+                        // port in its URL, which changes on respawn — a plain
+                        // reload would keep the dead URL, so re-navigate it.
+                        // This also clears the stuck "restarting…" state that
+                        // a restart-killed in-flight request can leave behind.
+                        crate::windows::repoint_plugins_window(&app, &state);
+                    }
                 } else {
                     // Startup window is measured from when THIS Starting phase
                     // began (mark_starting), not from shell launch — a
@@ -874,6 +901,10 @@ pub fn restart(app: &AppHandle) {
                 *state.pid.write().await = Some(pid);
                 spawn_holder(app.clone(), state.inner().clone(), child, generation);
                 state.mark_starting(cfg.server_port).await;
+                // Restart happened under a (visible) main window: once the
+                // new service answers, the health loop reloads the page so
+                // the user sees the fresh service instead of the stale UI.
+                state.reload_main_on_recover.store(true, std::sync::atomic::Ordering::SeqCst);
                 crate::tray::rebuild(&app, &DesktopConfig::load(&config_path(&app)));
             }
             Err(e) => {

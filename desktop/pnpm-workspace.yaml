@@ -1,4 +1,14 @@
+# Desktop shell workspace settings. This file is tracked so every build
+# environment (WSL dev, Windows build.ps1, CI) gets the same pnpm behavior.
+#
+# pnpm >= 10 blocks dependency install/build scripts unless they are reviewed
+# here (strictDepBuilds defaults to true in a workspace). tsx/vitest depend on
+# esbuild, whose postinstall downloads the platform binary — it MUST be
+# allowed or `pnpm install` fails with ERR_PNPM_IGNORED_BUILDS.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+
+# Older pnpm (<10.13) key; kept for forward/backward compatibility with the
+# existing lockfile and toolchains that still read it.
 onlyBuiltDependencies:
   - esbuild

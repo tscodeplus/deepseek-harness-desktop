@@ -1,0 +1,4 @@
+{
+  "version": "11.7.0",
+  "note": "Pinned to the same pnpm as the upstream dsh closure and this repo's packageManager (pnpm@11.7.0) — build-time and run-time pnpm behavior must match (lockfile format, allowBuilds semantics)."
+}

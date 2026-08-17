@@ -7,6 +7,7 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "fetch:dsh": "node scripts/fetch-dsh.cjs",
+    "fetch:pnpm": "node scripts/fetch-pnpm.cjs",
     "dev:sidecar": "node scripts/dev-sidecar.cjs",
     "build:sidecar": "tsc -p sidecar/tsconfig.json && node scripts/copy-sidecar-static.cjs",
     "tauri:dev": "tauri dev",
