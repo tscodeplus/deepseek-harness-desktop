@@ -4,7 +4,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/tscodeplus/deepseek-harness-desktop)](https://github.com/tscodeplus/deepseek-harness-desktop/releases)
-[![Desktop Release](https://img.shields.io/github/actions/workflow/status/tscodeplus/deepseek-harness-desktop/desktop-release.yml?label=release%20builds)](https://github.com/tscodeplus/deepseek-harness-desktop/actions/workflows/desktop-release.yml)
 
 [English](README.md) · **中文**
 
