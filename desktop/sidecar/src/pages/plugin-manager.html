@@ -224,7 +224,6 @@ var I18N = {
     manageHint: '当前 profile 已激活的插件层（含预置）；DeepSeek Harness 设置页的插件列表是运行时全部插件（含内置），与此不同。',
     empty: '尚未安装任何插件',
     installHint: '安装后需重启服务才会加载新插件；重启服务后本窗口关闭，应用页面自动刷新。',
-    installPrompt: '确定要安装该插件吗？插件可在你的用户权限下执行安装脚本。',
     removePrompt: '确定要移除插件 “{name}” 吗？重启后生效。',
     updatePrompt: '确定要更新插件 “{name}” 吗？',
     updatePromptTo: '确定将 “{name}” 从 {from} 更新到 {to} 吗？',
@@ -255,7 +254,6 @@ var I18N = {
     manageHint: 'Active plugin layers of this profile (incl. presets); the DeepSeek Harness Settings → Plugins page lists every runtime plugin (incl. built-ins).',
     empty: 'No plugins installed yet',
     installHint: 'A service restart is needed to load a newly installed plugin; this window closes and the app page reloads afterwards.',
-    installPrompt: 'Install this plugin? Plugins run lifecycle scripts with your user permissions.',
     removePrompt: 'Remove plugin "{name}"? It takes effect after a service restart.',
     updatePrompt: 'Update plugin "{name}"?',
     updatePromptTo: 'Update "{name}" from {from} to {to}?',
@@ -564,9 +562,7 @@ $('tab-btn-manage').addEventListener('click', function () { switchTab('manage');
 $('install').addEventListener('click', function () {
   var spec = $('spec').value.trim();
   if (!spec) return;
-  confirmModal(T.installPrompt, function () {
-    startJob('install', { spec: spec, restart: false }, 'install');
-  });
+  startJob('install', { spec: spec, restart: false }, 'install');
 });
 $('update-all').addEventListener('click', function () {
   showToast(T.checkingVersions);
