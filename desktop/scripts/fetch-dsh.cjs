@@ -80,6 +80,10 @@ function main() {
   const refIdx = argv.indexOf('--ref');
   const overrideRef = refIdx >= 0 ? argv[refIdx + 1] : undefined;
   const force = argv.includes('--force');
+  // Source-only fetch: checkout the pinned ref but skip pnpm install + build.
+  // Used on dev machines (e.g. WSL) that only need the closure source — the
+  // platform-specific build happens on the packaging host (Windows/macOS).
+  const skipBuild = argv.includes('--no-build');
 
   const refDoc = JSON.parse(fs.readFileSync(REF_FILE, 'utf8'));
   const ref = overrideRef || refDoc.ref;
@@ -111,12 +115,32 @@ function main() {
   }
 
   fs.mkdirSync(BUILD_DIR, { recursive: true });
-  if (!fs.existsSync(path.join(DSH_DIR, '.git'))) {
-    console.log(`[fetch-dsh] initializing clone at ${DSH_DIR} ...`);
-    fs.mkdirSync(DSH_DIR, { recursive: true });
-    sh('git init', DSH_DIR);
-    sh(`git remote add origin ${UPSTREAM}`, DSH_DIR);
+  // Wipe the previous closure and re-init. After a successful build the .git
+  // dir is removed (see header comment), so a fresh git init would see the old
+  // closure's files as untracked and `git checkout` would refuse to overwrite
+  // same-named ones. Wiping also absorbs interrupted runs. On Windows, plain
+  // rm / MSYS `git clean -fdx` both choke on NTFS long paths inside
+  // node_modules/.pnpm (> MAX_PATH) — robocopy /MIR from an empty dir handles
+  // them natively.
+  if (process.platform === 'win32') {
+    const empty = path.join(BUILD_DIR, '.empty');
+    fs.mkdirSync(empty, { recursive: true });
+    const robocopy = `robocopy "${empty}" "${DSH_DIR}" /MIR /NFL /NDL /NJH /NJS /R:1 /W:1`;
+    try {
+      execSync(robocopy, { stdio: 'inherit' });
+    } catch (e) {
+      // robocopy exit codes 0-7 are success (1 = files removed/copied);
+      // execSync throws on any non-zero, so only >=8 is a real failure.
+      if ((e.status ?? 8) >= 8) throw e;
+    }
+    fs.rmSync(empty, { recursive: true, force: true });
+  } else {
+    fs.rmSync(DSH_DIR, { recursive: true, force: true });
   }
+  console.log(`[fetch-dsh] initializing clone at ${DSH_DIR} ...`);
+  fs.mkdirSync(DSH_DIR, { recursive: true });
+  sh('git init', DSH_DIR);
+  sh(`git remote add origin ${UPSTREAM}`, DSH_DIR);
 
   console.log(`[fetch-dsh] fetching ref ${ref} ...`);
   try {
@@ -128,7 +152,7 @@ function main() {
     sh('git fetch --unshallow origin', DSH_DIR);
     sh(`git fetch origin ${ref}`, DSH_DIR);
   }
-  sh(`git checkout --detach ${ref}`, DSH_DIR);
+  sh(`git checkout --detach --force ${ref}`, DSH_DIR);
 
   // Toolchain: dsh requires Node ^22.19 || >=24 and pnpm 11 (see packageManager).
   const nodeMajor = Number(process.versions.node.split('.')[0]);
@@ -136,12 +160,15 @@ function main() {
     console.error(`[fetch-dsh] Node ${process.versions.node} too old — dsh needs ^22.19 || >=24`);
     process.exit(1);
   }
-  const pnpm = pnpmCmd();
-
-  console.log('[fetch-dsh] installing dependencies (upstream lockfile) ...');
-  sh(`${pnpm} install --frozen-lockfile`, DSH_DIR);
-  console.log('[fetch-dsh] building dsh (lib + web frontend) ...');
-  sh(`${pnpm} run build`, DSH_DIR);
+  if (!skipBuild) {
+    const pnpm = pnpmCmd();
+    console.log('[fetch-dsh] installing dependencies (upstream lockfile) ...');
+    sh(`${pnpm} install --frozen-lockfile`, DSH_DIR);
+    console.log('[fetch-dsh] building dsh (lib + web frontend) ...');
+    sh(`${pnpm} run build`, DSH_DIR);
+  } else {
+    console.log('[fetch-dsh] --no-build: skipping pnpm install + build (source-only closure)');
+  }
 
   if (fs.existsSync(CLI_ENTRY)) {
     console.log(`[fetch-dsh] OK: CLI entry ${CLI_ENTRY}`);
