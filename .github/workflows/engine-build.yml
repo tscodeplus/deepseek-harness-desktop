@@ -176,18 +176,26 @@ jobs:
             --target master || true
           gh release upload $ENGINE_TAG desktop/dsh-engine-*.tar.gz desktop/engine-manifest.json --clobber
           # Stale cleanup: keep only the assets the fresh manifest references.
+          # (REST API instead of `gh -q` — the query syntax differs across gh
+          # versions and has no stable output shape.)
           node -e "
             const fs = require('fs');
             const m = JSON.parse(fs.readFileSync('desktop/engine-manifest.json', 'utf8'));
             const keep = new Set([...Object.values(m.platforms).map(p => p.file), 'engine-manifest.json']);
             const { execSync } = require('child_process');
-            const out = execSync('gh release view $ENGINE_TAG --json assets -q .[].name', { encoding: 'utf8' });
-            for (const name of out.trim().split('\n').filter(Boolean)) {
-              if (!keep.has(name) && (name.startsWith('dsh-engine-') || name === 'engine-manifest.json')) {
-                console.log('deleting stale asset:', name);
-                execSync('gh release delete-asset $ENGINE_TAG ' + name + ' --yes');
+            (async () => {
+              const res = await fetch(
+                'https://api.github.com/repos/' + process.env.DESKTOP_REPO + '/releases/tags/' + process.env.ENGINE_TAG,
+                { headers: { Authorization: 'token ' + process.env.GH_TOKEN } },
+              );
+              const data = await res.json();
+              for (const a of data.assets || []) {
+                if (!keep.has(a.name) && (a.name.startsWith('dsh-engine-') || a.name === 'engine-manifest.json')) {
+                  console.log('deleting stale asset:', a.name);
+                  execSync('gh release delete-asset ' + process.env.ENGINE_TAG + ' ' + a.name + ' --yes');
+                }
               }
-            }
+            })().catch((e) => { console.error(e); process.exit(1); });
           "
       - name: Verify the published manifest
         run: |
