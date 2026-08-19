@@ -43,6 +43,10 @@ interface UpdaterLocale {
   engineClose: string;
   engineInstallNow: string;
   engineDownload: string;
+  // Staged update awaiting a user-confirmed restart.
+  engineInstallReady: string;
+  engineRestartNow: string;
+  engineLater: string;
 }
 
 interface TrayLocale {
@@ -168,6 +172,9 @@ function fallbackLocales(): DesktopLocales {
       engineClose: 'Close',
       engineInstallNow: 'Update now',
       engineDownload: 'Download',
+      engineInstallReady: 'Update ready — restart DeepSeek Harness to apply',
+      engineRestartNow: 'Restart Now',
+      engineLater: 'Later',
     },
     tray: {
       showHide: 'Show / Hide',

@@ -96,6 +96,8 @@ window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
     'engine-download-progress': [],
     'engine-downloaded': [],
     'engine-installing': [],
+    'engine-install-progress': [],
+    'engine-install-ready': [],
     'engine-installed': [],
     'engine-error': []
   };
@@ -113,6 +115,8 @@ window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
   es.addEventListener('engine-download-progress', function (e) { on(engineListeners, 'engine-download-progress', e); });
   es.addEventListener('engine-downloaded', function (e) { on(engineListeners, 'engine-downloaded', e); });
   es.addEventListener('engine-installing', function (e) { on(engineListeners, 'engine-installing', e); });
+  es.addEventListener('engine-install-progress', function (e) { on(engineListeners, 'engine-install-progress', e); });
+  es.addEventListener('engine-install-ready', function (e) { on(engineListeners, 'engine-install-ready', e); });
   es.addEventListener('engine-installed', function (e) { on(engineListeners, 'engine-installed', e); });
   es.addEventListener('engine-error', function (e) { on(engineListeners, 'engine-error', e); });
   window.__dshDialog = {
@@ -127,11 +131,14 @@ window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
     engineDownload: function () { ctl('/_desktop/engine/download'); },
     engineCancel: function () { ctl('/_desktop/engine/cancel'); },
     engineInstall: function () { ctl('/_desktop/engine/install'); },
+    engineRestart: function () { ctl('/_desktop/engine/restart'); },
     onEngineAvailable: function (f) { engineListeners['engine-available'].push(f); },
     onEngineNotAvailable: function (f) { engineListeners['engine-not-available'].push(f); },
     onEngineDownloadProgress: function (f) { engineListeners['engine-download-progress'].push(f); },
     onEngineDownloaded: function (f) { engineListeners['engine-downloaded'].push(f); },
     onEngineInstalling: function (f) { engineListeners['engine-installing'].push(f); },
+    onEngineInstallProgress: function (f) { engineListeners['engine-install-progress'].push(f); },
+    onEngineInstallReady: function (f) { engineListeners['engine-install-ready'].push(f); },
     onEngineInstalled: function (f) { engineListeners['engine-installed'].push(f); },
     onEngineError: function (f) { engineListeners['engine-error'].push(f); }
   };
@@ -468,6 +475,13 @@ async function handleEngine(
     }
     if (action === 'install' && method === 'POST') {
       void updater.getEngineUpdater().installUpdate();
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (action === 'restart' && method === 'POST') {
+      // User-confirmed restart applying a staged update — swaps the engine
+      // closure, respawns dsh and health-checks it (with rollback).
+      void updater.getEngineUpdater().restartUpdate();
       json(res, 200, { ok: true });
       return;
     }

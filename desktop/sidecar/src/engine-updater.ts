@@ -63,6 +63,7 @@ export type EngineState =
   | 'checking'
   | 'available'
   | 'downloading'
+  | 'ready' // staged closure awaits a user-confirmed restart
   | 'installing'
   | 'error';
 
@@ -85,8 +86,11 @@ export interface EngineStatus {
     raw?: string;
   };
   install: {
-    state: 'idle' | 'installing' | 'done' | 'error';
+    state: 'idle' | 'installing' | 'ready' | 'done' | 'error';
     message?: string;
+    /** 0-100 extraction progress; absent when unmeasurable (the UI falls
+     *  back to an indeterminate bar). */
+    progress?: number;
   };
 }
 
@@ -221,6 +225,9 @@ function engineDialogHtml(initial: EngineDialogInitial): string {
     engineClose: t.engineClose,
     engineInstallNow: t.engineInstallNow,
     engineDownload: t.engineDownload,
+    engineInstallReady: t.engineInstallReady,
+    engineRestartNow: t.engineRestartNow,
+    engineLater: t.engineLater,
     speed: t.speed,
   };
   const dark = isDarkTheme();
@@ -282,6 +289,15 @@ ${css}
   });
   d.onEngineInstalling(function () {
     state(L.engineInstalling, null, null, L.engineClose, function () { d.close(); });
+  });
+  d.onEngineInstallProgress(function (ev) {
+    show('bar-wrap');
+    document.getElementById('bar').style.width = (ev.percent || 0) + '%';
+    state(L.engineInstalling, null, null, L.engineClose, function () { d.close(); });
+  });
+  d.onEngineInstallReady(function (ev) {
+    hide('bar-wrap');
+    state(L.engineInstallReady, L.engineRestartNow, function () { d.engineRestart(); }, L.engineLater, function () { d.close(); });
   });
   d.onEngineInstalled(function (ev) {
     state(L.engineInstalled.replace('{{version}}', ev.version || ''), null, null, L.engineClose, function () { d.close(); });
@@ -457,10 +473,13 @@ class EngineUpdater {
     this.downloadCancelled = true;
   }
 
-  /** Extract the tarball into the engine home, swap it in, health-check the
-   *  respawned dsh, and roll back on failure. */
+  /** Extract the downloaded tarball into engine.staging and verify the
+   *  closure — WITHOUT touching the live engine. The user then confirms the
+   *  restart (they may be running tasks; an auto-restart would hard-stop
+   *  them). The swap happens in restartUpdate() (user-confirmed) or at next
+   *  boot via applyPendingEngineStaging() (dsh not running — no interruption). */
   async installUpdate(): Promise<void> {
-    if (this.state === 'installing') return;
+    if (this.state === 'installing' || this.state === 'ready') return;
     if (!this.available || !this.downloadedPath) {
       diagLog('install: nothing to install');
       return;
@@ -472,7 +491,6 @@ class EngineUpdater {
     const engineDir = this.deps.engineDir;
     const homeDir = path.dirname(engineDir);
     const stagingDir = path.join(homeDir, 'engine.staging');
-    const prevDir = path.join(homeDir, 'engine.prev');
     const t = getT().updater;
 
     try {
@@ -485,11 +503,37 @@ class EngineUpdater {
         );
       }
 
-      // 1. Extract into staging.
+      // 1. Extract into staging, reporting progress per entry. Pre-scan the
+      // entry count first (best effort — if it fails, the UI shows an
+      // indeterminate bar instead of a percentage).
       fs.rmSync(stagingDir, { recursive: true, force: true });
       fs.mkdirSync(stagingDir, { recursive: true });
       diagLog(`install: extracting ${this.downloadedPath} → ${stagingDir}`);
-      await extractTar({ file: this.downloadedPath, cwd: stagingDir, unlink: true });
+      let totalEntries = 0;
+      try {
+        await extractTar({
+          file: this.downloadedPath,
+          filter: () => {
+            totalEntries++;
+            return false; // count only — nothing to write
+          },
+        });
+      } catch {
+        totalEntries = 0; // unmeasurable — indeterminate bar in the UI
+      }
+      let doneEntries = 0;
+      await extractTar({
+        file: this.downloadedPath,
+        cwd: stagingDir,
+        unlink: true,
+        onentry: () => {
+          if (totalEntries <= 0) return;
+          doneEntries++;
+          const pct = Math.min(85, Math.round((doneEntries / totalEntries) * 85));
+          this.installState = { state: 'installing', progress: pct };
+          broadcastEvent('engine-install-progress', { percent: pct });
+        },
+      });
 
       // 2. Verify the staged closure before touching the live one.
       const stagedRef = readEngineRef(stagingDir);
@@ -506,7 +550,55 @@ class EngineUpdater {
       if (!fs.existsSync(binJs)) throw new Error('staged closure missing CLI entry');
       diagLog(`install: staged closure ok (${stagedRef.ref.slice(0, 12)})`);
 
-      // 3. Swap: shell health loop to Starting, kill dsh, rename triple.
+      // 3. Staged and verified — stop here. The live engine keeps running;
+      // the swap needs the user's confirmation (restartUpdate) or the next
+      // app boot (applyPendingEngineStaging).
+      this.installState = { state: 'ready', progress: 100 };
+      this.state = 'ready';
+      diagLog('install: staged, awaiting user-confirmed restart');
+      broadcastEvent('engine-install-ready', {
+        version: stagedRef.upstreamVersion ?? stagedRef.tag ?? stagedRef.ref.slice(0, 12),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      diagLog(`install failed: ${msg}`);
+      try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* ok */
+      }
+      this.state = 'error';
+      this.installState = { state: 'error', message: t.engineInstallFailed };
+      broadcastEvent('engine-error', { message: t.engineInstallFailed, raw: msg });
+    }
+  }
+
+  /** Apply a staged update: swap engine.staging → engine, respawn dsh and
+   *  health-check it, rolling back on failure. Only ever called by the
+   *  user-confirmed restart (POST /_desktop/engine/restart) — never
+   *  automatically, so running tasks are not interrupted behind the user's
+   *  back. */
+  async restartUpdate(): Promise<void> {
+    if (this.state === 'installing') return;
+    if (this.installState.state !== 'ready') {
+      diagLog('restart: no staged update');
+      return;
+    }
+    this.state = 'installing';
+    this.installState = { state: 'installing', progress: 90 };
+    broadcastEvent('engine-installing', { version: this.available?.version ?? '' });
+
+    const engineDir = this.deps.engineDir;
+    const homeDir = path.dirname(engineDir);
+    const stagingDir = path.join(homeDir, 'engine.staging');
+    const prevDir = path.join(homeDir, 'engine.prev');
+    const t = getT().updater;
+    const stagedRef = readEngineRef(stagingDir);
+
+    try {
+      if (!stagedRef) throw new Error('staged closure missing .engine-ref.json');
+
+      // 1. Swap: shell health loop to Starting, kill dsh, rename triple.
       await postToShell('/engine-swap-begin', {});
       await this.deps.killDsh();
       fs.rmSync(prevDir, { recursive: true, force: true });
@@ -522,13 +614,13 @@ class EngineUpdater {
         throw e;
       }
 
-      // 4. Respawn and health-check the new engine.
+      // 2. Respawn and health-check the new engine.
       this.deps.respawn();
       if (await waitForHealth(45_000)) {
         this.current = stagedRef;
         this.state = 'idle';
         this.installState = { state: 'done', message: stagedRef.upstreamVersion ?? stagedRef.tag ?? stagedRef.ref.slice(0, 12) };
-        diagLog(`install: OK, engine now ${stagedRef.ref.slice(0, 12)}`);
+        diagLog(`restart: OK, engine now ${stagedRef.ref.slice(0, 12)}`);
         broadcastEvent('engine-installed', {
           version: stagedRef.upstreamVersion ?? stagedRef.tag ?? stagedRef.ref.slice(0, 12),
         });
@@ -537,8 +629,8 @@ class EngineUpdater {
         return;
       }
 
-      // 5. Rollback: kill the new engine, restore prev, fresh startup window.
-      diagLog('install: new engine failed health check — rolling back');
+      // 3. Rollback: kill the new engine, restore prev, fresh startup window.
+      diagLog('restart: new engine failed health check — rolling back');
       await this.deps.killDsh();
       fs.rmSync(engineDir, { recursive: true, force: true });
       fs.renameSync(prevDir, engineDir);
@@ -549,7 +641,7 @@ class EngineUpdater {
         this.installState = { state: 'error', message: t.engineRolledBack };
         broadcastEvent('engine-error', {
           message: t.engineRolledBack,
-          raw: 'health check failed after install; rolled back to previous version',
+          raw: 'health check failed after restart; rolled back to previous version',
         });
       } else {
         this.state = 'error';
@@ -561,9 +653,7 @@ class EngineUpdater {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      diagLog(`install failed: ${msg}`);
-      // Clean up a leftover staging (only safe when the live engine is intact —
-      // after a successful rename, staging no longer exists).
+      diagLog(`restart failed: ${msg}`);
       try {
         fs.rmSync(stagingDir, { recursive: true, force: true });
       } catch {
@@ -573,6 +663,38 @@ class EngineUpdater {
       this.installState = { state: 'error', message: t.engineInstallFailed };
       broadcastEvent('engine-error', { message: t.engineInstallFailed, raw: msg });
     }
+  }
+}
+
+/**
+ * Apply a staged engine update at boot, before dsh spawns: swap
+ * engine.staging → engine while nothing is running — no interruption, no
+ * health check needed. Called from index.ts after ensureEngine(); returns
+ * true when a staged update was applied. A corrupt staging is discarded so
+ * the live engine stays untouched.
+ */
+export function applyPendingEngineStaging(engineDir: string): boolean {
+  const homeDir = path.dirname(engineDir);
+  const stagingDir = path.join(homeDir, 'engine.staging');
+  const prevDir = path.join(homeDir, 'engine.prev');
+  if (!fs.existsSync(stagingDir)) return false;
+  try {
+    const stagedRef = readEngineRef(stagingDir);
+    const binJs = path.join(stagingDir, 'dsh-dist', 'apps', 'cli', 'lib', 'bin.js');
+    if (!stagedRef || !fs.existsSync(binJs)) {
+      diagLog('applyPendingStaging: invalid staged closure — discarding');
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      return false;
+    }
+    fs.rmSync(prevDir, { recursive: true, force: true });
+    fs.renameSync(engineDir, prevDir); // live → prev
+    fs.renameSync(stagingDir, engineDir); // staging → live
+    fs.rmSync(prevDir, { recursive: true, force: true });
+    diagLog(`applyPendingStaging: applied staged engine ${stagedRef.ref.slice(0, 12)}`);
+    return true;
+  } catch (e) {
+    diagLog(`applyPendingStaging failed: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
   }
 }
 

@@ -36,6 +36,10 @@
   .bar { height:6px; background:var(--border); border-radius:3px;
          overflow:hidden; width:160px; flex:none; }
   .bar > div { height:100%; background:var(--btn); width:0; }
+  /* Indeterminate bar — while installing when extraction progress is
+     unmeasurable (pre-scan failed). */
+  .bar.indeterminate > div { width:30%; animation:bar-slide 1.2s ease-in-out infinite; }
+  @keyframes bar-slide { 0% { transform:translateX(-120%); } 100% { transform:translateX(420%); } }
   .engine-status { display:flex; flex-direction:column; gap:4px;
                    align-items:flex-start; flex:1; min-width:0; }
   .engine-status .line { display:flex; align-items:center; gap:8px;
@@ -257,6 +261,8 @@
       var id = (e.target && e.target.id) || '';
       if (id === 'eng-download') postEngine('download');
       else if (id === 'eng-install') postEngine('install');
+      else if (id === 'eng-restart') postEngine('restart');
+      else if (id === 'eng-later') engHide();
       else if (id === 'eng-cancel') postEngine('cancel');
       else if (id === 'eng-recheck') { postEngine('check'); engPollStart(); }
       e.preventDefault();
@@ -277,10 +283,20 @@
         }
         lines.push(engEsc((L.engineInstalled || 'DeepSeek Harness updated to {{version}}')
           .replace('{{version}}', v || '-')));
-        engShow(lines, 6000);
+        // Static confirmation — never auto-hides or flashes away (the engine
+        // restarted, so stop polling; the status would otherwise go idle and
+        // the polling render would clear this line).
+        engPollStop();
+        engShow(lines, 0);
         return;
       }
-      if (s.state === 'checking') {
+      if (s.state === 'ready' || ins.state === 'ready') {
+        // Staged update awaits the user's go — the engine keeps running
+        // until they confirm (auto-restart would interrupt running tasks).
+        lines.push(engEsc(L.engineInstallReady || 'Update ready — restart to apply') +
+                   engLink(L.engineRestartNow || 'Restart Now', 'eng-restart', 'primary') +
+                   engLink(L.engineLater || 'Later', 'eng-later', 'ghost'));
+      } else if (s.state === 'checking') {
         lines.push(engEsc(L.engineChecking || 'Checking for updates…'));
       } else if (s.state === 'downloading' ||
                  (s.state === 'available' && dl.state === 'downloading')) {
@@ -301,8 +317,15 @@
         lines.push(engEsc((L.engineAvailable || 'Update available') + ' ' +
                           (av.version || '') + ' (' + fmtMB(av.size || 0) + ')') +
                    engLink(L.engineDownload || 'Download', 'eng-download', 'primary'));
-      } else if (s.state === 'installing') {
+      } else if (s.state === 'installing' || ins.state === 'installing') {
         lines.push(engEsc(L.engineInstalling || 'Installing…'));
+        if (typeof ins.progress === 'number' && ins.progress >= 0) {
+          var ipct = Math.min(100, Math.round(ins.progress));
+          lines.push('<span class="bar"><div style="width:' + ipct + '%"></div></span>' +
+                     '<span>' + ipct + '%</span>');
+        } else {
+          lines.push('<span class="bar indeterminate"><div></div></span>');
+        }
       } else if (s.state === 'error') {
         // Report the actual failing step: a download failure is not an
         // install failure, and a rolled-back install has its own message.

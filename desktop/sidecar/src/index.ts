@@ -22,7 +22,11 @@ import {
   ensureDataDirs,
   startHeartbeat,
 } from './control-server.js';
-import { getEngineUpdater, initEngineUpdater } from './engine-updater.js';
+import {
+  applyPendingEngineStaging,
+  getEngineUpdater,
+  initEngineUpdater,
+} from './engine-updater.js';
 
 const isDev = process.env.DSHD_DEV === '1';
 const resourcesDir = process.env.DSHD_RESOURCES_DIR ?? process.cwd();
@@ -101,6 +105,11 @@ ensureDataDirs();
 
 // 2. Engine bootstrap (seed copy), then spawn dsh web.
 ensureEngine();
+// A staged update (user picked "Later" last run) is applied here, before dsh
+// spawns — nothing is running, so the swap cannot interrupt any task.
+if (!isDev) {
+  applyPendingEngineStaging(engineDir);
+}
 
 let dshChild: ChildProcess | null = null;
 
@@ -181,6 +190,10 @@ const controlServer = createControlServer({
 // 4. Engine updater (needs the control API's engine routes up; the updater
 // itself only reads refs at init). Startup silent check: after 25s, fetch
 // the engine manifest; a newer DeepSeek Harness prompts (never auto-installs).
+// TEMPORARILY DISABLED (product decision 2026-08-19): updates surface only
+// from the About page's manual check. Flip ENGINE_STARTUP_CHECK_ENABLED to
+// re-enable the popup flow — the code is fully wired and tested.
+const ENGINE_STARTUP_CHECK_ENABLED = false;
 initEngineUpdater({
   engineDir,
   killDsh: () => stopDshChild('engine-swap'),
@@ -188,7 +201,7 @@ initEngineUpdater({
     respawnDsh();
   },
 });
-if (!isDev && !engineSeedFailed) {
+if (ENGINE_STARTUP_CHECK_ENABLED && !isDev && !engineSeedFailed) {
   setTimeout(() => {
     getEngineUpdater()
       .checkForUpdate({ popup: true })
