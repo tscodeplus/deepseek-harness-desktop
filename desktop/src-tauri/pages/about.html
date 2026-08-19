@@ -33,6 +33,13 @@
   .chip { display:inline-block; padding:2px 8px; border-radius:10px;
           background:var(--chip-bg); font-size:11px; color:var(--muted);
           margin-left:6px; vertical-align:1px; }
+  .bar { height:6px; background:var(--border); border-radius:3px;
+         overflow:hidden; width:160px; flex:none; }
+  .bar > div { height:100%; background:var(--btn); width:0; }
+  .engine-status { display:flex; flex-direction:column; gap:4px;
+                   align-items:flex-start; flex:1; min-width:0; }
+  .engine-status .line { display:flex; align-items:center; gap:8px;
+                         font-size:12px; flex-wrap:wrap; }
   .footer { display:flex; gap:10px; padding:14px 22px 18px;
             border-top:1px solid var(--border); }
   button { flex:1; padding:8px 10px; border:none; border-radius:8px;
@@ -74,6 +81,10 @@
       <span id="val-engine"></span>
       <a id="lnk-engine-check" href="#" style="font-size:12px"></a>
     </span>
+  </div>
+  <div class="row" id="engine-status-row" style="display:none">
+    <span class="label" id="lbl-engine-status"></span>
+    <span class="value engine-status" id="engine-status-value"></span>
   </div>
 </div>
 <div class="footer">
@@ -162,15 +173,138 @@
     // the sidecar control API so engine updates show here without a desktop
     // release. The injected (compile-time) values are the fallback.
     set('lbl-engine', L.engineLabel || 'DeepSeek Harness');
+    set('lbl-engine-status', L.engineLabel || 'DeepSeek Harness');
+
+    // Inline update flow (same pattern as OhMyAgent's Settings > About): the
+    // check button drives check/download/install inline in this window by
+    // polling /_desktop/engine/status — no separate popup.
+    var engRow = document.getElementById('engine-status-row');
+    var engVal = document.getElementById('engine-status-value');
+    var engPoll = null;
+    var engHideTimer = null;
+
+    function engEsc(s) {
+      var d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
+    function engLink(label, id) {
+      return '<a href="#" id="' + id + '" style="font-size:12px">' + engEsc(label) + '</a>';
+    }
+    function fmtMB(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+    function postEngine(action) {
+      var port = a.sidecarPort;
+      if (!port) return;
+      post('http://127.0.0.1:' + port + '/_desktop/engine/' + action, a.sidecarToken,
+           {}).catch(function () {});
+    }
+    function engPollStart() {
+      if (engPoll) return;
+      engPoll = setInterval(function () {
+        var port = a.sidecarPort;
+        if (!port) return;
+        fetch('http://127.0.0.1:' + port + '/_desktop/engine/status?token=' +
+              encodeURIComponent(a.sidecarToken || ''))
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (s) { if (s) renderEngineStatus(s); })
+          .catch(function () {});
+      }, 1000);
+    }
+    function engPollStop() {
+      if (engPoll) { clearInterval(engPoll); engPoll = null; }
+    }
+    function engShow(parts, hideAfterMs) {
+      engVal.innerHTML = parts.join(' <span class="line">·</span> ');
+      engRow.style.display = '';
+      if (hideAfterMs) {
+        engHideTimer = setTimeout(function () { engRow.style.display = 'none'; }, hideAfterMs);
+      } else if (engHideTimer) {
+        clearTimeout(engHideTimer);
+        engHideTimer = null;
+      }
+    }
+    function engHide() {
+      engRow.style.display = 'none';
+      engPollStop();
+      if (engHideTimer) { clearTimeout(engHideTimer); engHideTimer = null; }
+    }
+
+    // Action buttons are created dynamically — delegate on the container.
+    engVal.addEventListener('click', function (e) {
+      var id = (e.target && e.target.id) || '';
+      if (id === 'eng-download') postEngine('download');
+      else if (id === 'eng-install') postEngine('install');
+      else if (id === 'eng-cancel') postEngine('cancel');
+      else if (id === 'eng-recheck') { postEngine('check'); engPollStart(); }
+      e.preventDefault();
+    });
+
+    function renderEngineStatus(s) {
+      var cur = s.current || {};
+      var check = s.check || {}, dl = s.download || {}, ins = s.install || {};
+      var lines = [];
+      if (ins.state === 'done') {
+        // Engine swapped — refresh the version row too.
+        var v = ins.message || cur.upstreamVersion || (cur.ref ? cur.ref.slice(0, 12) : '');
+        if (cur.upstreamVersion) set('val-engine', cur.upstreamVersion);
+        if (cur.ref) {
+          var ce = document.getElementById('lnk-commit');
+          ce.textContent = cur.ref.slice(0, 12);
+          ce.href = (L.dshRepo || 'https://github.com/deepseek-ai/deepseek-harness') + '/tree/' + cur.ref;
+        }
+        lines.push(engEsc((L.engineInstalled || 'DeepSeek Harness updated to {{version}}')
+          .replace('{{version}}', v || '-')));
+        engShow(lines, 6000);
+        return;
+      }
+      if (s.state === 'checking') {
+        lines.push(engEsc(L.engineChecking || 'Checking for updates…'));
+      } else if (s.state === 'downloading' ||
+                 (s.state === 'available' && dl.state === 'downloading')) {
+        var pct = Math.round((dl.progress && dl.progress.percent) || 0);
+        lines.push(engEsc(L.engineDownloading || 'Downloading…'));
+        lines.push('<span class="line"><span class="bar"><div style="width:' + pct + '%"></div></span>' +
+                   '<span>' + pct + '%</span>' +
+                   engLink(L.engineCancel || 'Cancel', 'eng-cancel') + '</span>');
+      } else if (s.state === 'available' && dl.state === 'done') {
+        lines.push(engEsc(L.engineDownloaded || 'Downloaded, ready to install'));
+        lines.push(engLink(L.engineInstallNow || 'Install', 'eng-install'));
+      } else if (s.state === 'available') {
+        var av = s.available || {};
+        lines.push(engEsc((L.engineAvailable || 'Update available') + ' ' +
+                          (av.version || '') + ' (' + fmtMB(av.size || 0) + ')'));
+        lines.push(engLink(L.engineDownload || 'Download', 'eng-download'));
+      } else if (s.state === 'installing') {
+        lines.push(engEsc(L.engineInstalling || 'Installing…'));
+      } else if (s.state === 'error') {
+        lines.push(engEsc(ins.message || L.engineInstallFailed || 'Install failed'));
+        lines.push(engLink(L.engineCheckAgain || 'Check Again', 'eng-recheck'));
+      } else if (check.state === 'done' && check.result === 'uptodate') {
+        lines.push(engEsc(L.engineUpToDate || 'Up to date'));
+        engShow(lines, 5000);
+        return;
+      } else if (check.state === 'done' && check.result === 'none') {
+        engHide();
+        return;
+      } else {
+        engHide();
+        return;
+      }
+      engShow(lines, 0);
+    }
+
     var engineCheckEl = document.getElementById('lnk-engine-check');
     engineCheckEl.textContent = L.checkEngineUpdates || 'Check for updates';
     engineCheckEl.onclick = function (e) {
       e.preventDefault();
       var port = a.sidecarPort;
       if (!port) return;
-      post('http://127.0.0.1:' + port + '/_desktop/engine/check', a.sidecarToken,
-           { fromTray: true }).catch(function () {});
+      postEngine('check');
+      // Show the checking state immediately, then poll the sidecar.
+      engShow([engEsc(L.engineChecking || 'Checking for updates…')], 0);
+      engPollStart();
     };
+
     (function refreshEngineStatus() {
       var port = a.sidecarPort;
       if (!port) return; // heartbeat not synced yet — keep compile-time values
@@ -190,6 +324,12 @@
             commitEl.href = (L.dshRepo || 'https://github.com/deepseek-ai/deepseek-harness') + '/tree/' + cur.ref;
           }
           set('val-engine', upstream || cur.ref.slice(0, 12) || '-');
+          // If an engine operation is in flight (e.g. started from the
+          // startup popup), show the inline status and follow it.
+          if (s.state !== 'idle') {
+            renderEngineStatus(s);
+            engPollStart();
+          }
         })
         .catch(function () { /* keep compile-time values */ });
     })();

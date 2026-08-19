@@ -17,7 +17,7 @@ import { x as extractTar } from 'tar';
 
 import { broadcastEvent, postToShell, showWindow } from './control-server.js';
 import { loadConfig } from './config.js';
-import { DownloadCancelledError, downloadResumable } from './download.js';
+import { DownloadCancelledError, DownloadProgress, downloadResumable } from './download.js';
 import { getT } from './i18n.js';
 import { fetchWithProxy } from './net.js';
 import { compareVersions } from './updater.js';
@@ -65,6 +65,26 @@ export type EngineState =
   | 'downloading'
   | 'installing'
   | 'error';
+
+/** Full status the About page polls to render the inline update flow. */
+export interface EngineStatus {
+  current: EngineRef | null;
+  available: EngineManifestEntry | null;
+  state: EngineState;
+  check: {
+    state: 'idle' | 'checking' | 'done';
+    result: 'none' | 'available' | 'uptodate' | 'error';
+    message?: string;
+  };
+  download: {
+    state: 'idle' | 'downloading' | 'done' | 'error';
+    progress?: DownloadProgress;
+  };
+  install: {
+    state: 'idle' | 'installing' | 'done' | 'error';
+    message?: string;
+  };
+}
 
 export interface EngineRuntimeDeps {
   /** <DSHD_HOME>/engine — the live engine closure home. */
@@ -292,6 +312,9 @@ class EngineUpdater {
   private downloadedPath: string | null = null;
   private downloadCancelled = false;
   private checking = false;
+  private checkResult: EngineStatus['check'] = { state: 'idle', result: 'none' };
+  private downloadState: EngineStatus['download'] = { state: 'idle' };
+  private installState: EngineStatus['install'] = { state: 'idle' };
 
   constructor(private deps: EngineRuntimeDeps) {
     this.current = readEngineRef(deps.engineDir);
@@ -300,27 +323,27 @@ class EngineUpdater {
     );
   }
 
-  status(): {
-    current: EngineRef | null;
-    available: EngineManifestEntry | null;
-    state: EngineState;
-  } {
+  status(): EngineStatus {
     return {
       current: this.current,
       available: this.available,
       state: this.state,
+      check: this.checkResult,
+      download: this.downloadState,
+      install: this.installState,
     };
   }
 
   /** Fetch the manifest and compare against the local engine. Sends SSE
-   *  engine-* events. When `showDialog` the result dialog is opened AFTER
-   *  the check completes (initial state = result, so no SSE race).
-   *  Without `showDialog` (startup silent check) the dialog only opens when
-   *  an update is actually available — user confirms before downloading. */
-  async checkForUpdate(opts: { showDialog?: boolean } = {}): Promise<void> {
+   *  engine-* events and records the outcome in `check` for the About page's
+   *  inline flow. `popup` (startup silent check) opens the result dialog
+   *  when an update is available; the About-page button (popup:false) renders
+   *  the same states inline instead. */
+  async checkForUpdate(opts: { popup?: boolean } = {}): Promise<void> {
     if (this.checking) return;
     this.checking = true;
     this.state = 'checking';
+    this.checkResult = { state: 'checking', result: 'none' };
     try {
       const resp = await fetchWithProxy(ENGINE_MANIFEST_URL, {
         signal: AbortSignal.timeout(15_000),
@@ -329,6 +352,7 @@ class EngineUpdater {
         // No engine release yet (first install) — quiet no-update.
         diagLog('check: no engine release (404)');
         this.state = 'idle';
+        this.checkResult = { state: 'done', result: 'none' };
         broadcastEvent('engine-not-available', {});
         return;
       }
@@ -339,33 +363,33 @@ class EngineUpdater {
       if (decision.update && entry) {
         this.available = entry;
         this.state = 'available';
+        this.checkResult = { state: 'done', result: 'available' };
         broadcastEvent('engine-available', {
           version: entry.version,
           ref: entry.ref,
           size: entry.size,
         });
-        if (opts.showDialog) {
+        // Silent discovery must surface to the user for confirmation before
+        // any download happens — the startup check pops the dialog, the
+        // About-page button shows the same state inline.
+        if (opts.popup) {
           showWindow('engine-updater', engineDialogHtml({ state: 'available', version: entry.version }), 480, 360, isDarkTheme());
         }
       } else {
         this.available = null;
         this.state = 'idle';
+        this.checkResult = { state: 'done', result: 'uptodate' };
         broadcastEvent('engine-not-available', {});
-        if (opts.showDialog) {
-          showWindow('engine-updater', engineDialogHtml({ state: 'uptodate' }), 480, 360, isDarkTheme());
-        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       diagLog(`check failed: ${msg}`);
       this.state = 'error';
+      this.checkResult = { state: 'done', result: 'error', message: msg };
       broadcastEvent('engine-error', {
         message: getT().updater.checkFailed,
         raw: msg,
       });
-      if (opts.showDialog) {
-        showWindow('engine-updater', engineDialogHtml({ state: 'error', message: getT().updater.checkFailed, raw: msg }), 480, 360, isDarkTheme());
-      }
     } finally {
       this.checking = false;
     }
@@ -380,6 +404,7 @@ class EngineUpdater {
     }
     this.state = 'downloading';
     this.downloadCancelled = false;
+    this.downloadState = { state: 'downloading' };
     try {
       const downloadsDir = path.join(process.env.DSHD_HOME ?? os.homedir(), 'downloads');
       const { path: filePath } = await downloadResumable({
@@ -389,11 +414,15 @@ class EngineUpdater {
         versionMarker: this.available.ref,
         sha512: this.available.sha512,
         shouldCancel: () => this.downloadCancelled,
-        onProgress: (p) => broadcastEvent('engine-download-progress', p),
+        onProgress: (p) => {
+          this.downloadState = { state: 'downloading', progress: p };
+          broadcastEvent('engine-download-progress', p);
+        },
         log: (m) => diagLog(`download: ${m}`),
       });
       this.downloadedPath = filePath;
       this.state = 'available';
+      this.downloadState = { state: 'done' };
       broadcastEvent('engine-downloaded', {
         version: this.available.version,
         path: filePath,
@@ -402,11 +431,13 @@ class EngineUpdater {
       if (e instanceof DownloadCancelledError) {
         diagLog('download: cancelled by user');
         this.state = 'available';
+        this.downloadState = { state: 'idle' };
         return;
       }
       const msg = e instanceof Error ? e.message : String(e);
       diagLog(`download failed: ${msg}`);
       this.state = 'error';
+      this.downloadState = { state: 'error' };
       broadcastEvent('engine-error', {
         message: getT().updater.downloadFailed,
         raw: msg,
@@ -427,6 +458,7 @@ class EngineUpdater {
       return;
     }
     this.state = 'installing';
+    this.installState = { state: 'installing' };
     broadcastEvent('engine-installing', { version: this.available.version });
 
     const engineDir = this.deps.engineDir;
@@ -487,6 +519,7 @@ class EngineUpdater {
       if (await waitForHealth(45_000)) {
         this.current = stagedRef;
         this.state = 'idle';
+        this.installState = { state: 'done', message: stagedRef.upstreamVersion ?? stagedRef.tag ?? stagedRef.ref.slice(0, 12) };
         diagLog(`install: OK, engine now ${stagedRef.ref.slice(0, 12)}`);
         broadcastEvent('engine-installed', {
           version: stagedRef.upstreamVersion ?? stagedRef.tag ?? stagedRef.ref.slice(0, 12),
@@ -505,12 +538,14 @@ class EngineUpdater {
       this.deps.respawn();
       if (await waitForHealth(60_000)) {
         this.state = 'idle';
+        this.installState = { state: 'error', message: t.engineRolledBack };
         broadcastEvent('engine-error', {
           message: t.engineRolledBack,
           raw: 'health check failed after install; rolled back to previous version',
         });
       } else {
         this.state = 'error';
+        this.installState = { state: 'error', message: t.engineInstallFailed };
         broadcastEvent('engine-error', {
           message: t.engineInstallFailed,
           raw: 'rollback respawn also failed to recover the service',
@@ -527,6 +562,7 @@ class EngineUpdater {
         /* ok */
       }
       this.state = 'error';
+      this.installState = { state: 'error', message: t.engineInstallFailed };
       broadcastEvent('engine-error', { message: t.engineInstallFailed, raw: msg });
     }
   }

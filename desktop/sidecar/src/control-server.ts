@@ -455,8 +455,9 @@ async function handleEngine(
       return;
     }
     if (action === 'check' && method === 'POST') {
-      const body = (await readJson(req)) as { fromTray?: boolean };
-      void updater.getEngineUpdater().checkForUpdate({ showDialog: body?.fromTray === true });
+      // About-page button: no popup — the page renders the inline flow from
+      // /engine/status (the startup silent check passes popup:true itself).
+      void updater.getEngineUpdater().checkForUpdate({ popup: false });
       json(res, 200, { ok: true });
       return;
     }

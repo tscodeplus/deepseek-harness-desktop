@@ -191,7 +191,7 @@ initEngineUpdater({
 if (!isDev && !engineSeedFailed) {
   setTimeout(() => {
     getEngineUpdater()
-      .checkForUpdate({ showDialog: false })
+      .checkForUpdate({ popup: true })
       .catch((e: unknown) => {
         console.error('[sidecar] engine update check failed:', e);
       });
