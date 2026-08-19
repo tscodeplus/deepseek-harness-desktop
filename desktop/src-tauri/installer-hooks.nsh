@@ -22,16 +22,25 @@
 ; CheckIfAppIsRunning runs earlier in the section and prompts/kills a running
 ; app, so ~/.dsh/engine is not file-locked here (a lock would make RmDir
 ; silently fail and the stale engine would survive — the bug this fixes).
-!define NSIS_HOOK_POSTINSTALL "NSIS_HOOK_POSTINSTALL_"
-!macro NSIS_HOOK_POSTINSTALL_
+;
+; IMPORTANT: the macro name must be exactly NSIS_HOOK_POSTINSTALL. The
+; generated template guards the call site with `!ifmacrodef
+; NSIS_HOOK_POSTINSTALL`, which only detects `!macro` definitions — NOT
+; `!define` constants. The previous `!define NSIS_HOOK_POSTINSTALL "…_"`
+; + `!macro …_` indirection was silently dead: !ifmacrodef evaluated
+; false, so the hook never compiled into the installer at all (verified
+; with makensis /V4 on a probe script; a stale engine survived re-install
+; because the hook was absent, not because RmDir failed).
+!macro NSIS_HOOK_POSTINSTALL
   ReadEnvStr $0 "USERPROFILE"
   StrCmp $0 "" dshd_inst_done
   RmDir /r "$0\.dsh\engine"
   dshd_inst_done:
 !macroend
 
-!define NSIS_HOOK_PREUNINSTALL "NSIS_HOOK_PREUNINSTALL_"
-!macro NSIS_HOOK_PREUNINSTALL_
+; Same naming rule as NSIS_HOOK_POSTINSTALL above: the template's
+; `!ifmacrodef NSIS_HOOK_PREUNINSTALL` only matches a `!macro` definition.
+!macro NSIS_HOOK_PREUNINSTALL
   ; The engine (dsh runtime closure at ~/.dsh/engine) is regenerable — the
   ; installer ships a seed copy and the sidecar re-seeds on first run. Always
   ; remove it on uninstall (and on update-mode re-install, which also runs
