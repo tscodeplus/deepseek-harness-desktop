@@ -87,21 +87,15 @@
     <span class="value" id="val-ver"></span>
   </div>
   <div class="row">
-    <span class="label" id="lbl-upstream"></span>
-    <span class="value">
-      <span id="val-upstream"></span><span class="chip" id="chip-tag"></span>
-    </span>
-  </div>
-  <div class="row">
-    <span class="label" id="lbl-commit"></span>
-    <span class="value"><a id="lnk-commit"></a></span>
-  </div>
-  <div class="row">
     <span class="label" id="lbl-engine"></span>
     <span class="value">
       <span id="val-engine"></span>
       <a id="lnk-engine-check" href="#" style="font-size:12px"></a>
     </span>
+  </div>
+  <div class="row">
+    <span class="label" id="lbl-commit"></span>
+    <span class="value"><a id="lnk-commit"></a></span>
   </div>
   <div class="row" id="engine-status-row" style="display:none">
     <span class="label" id="lbl-engine-status"></span>
@@ -133,21 +127,7 @@
     set('app-sub', a.version ? ('v' + a.version) : '');
     set('lbl-ver', L.desktopVersionLabel || 'Desktop version');
     set('val-ver', a.version || '-');
-    set('lbl-upstream', L.upstreamLabel || 'Upstream');
     set('lbl-commit', L.upstreamCommitLabel || 'GitHub commit');
-
-    var upstream = '';
-    if (a.upstreamVersion) upstream += a.upstreamVersion;
-    if (a.upstreamTag) upstream += upstream ? ' (tag ' + a.upstreamTag + ')' : ('tag ' + a.upstreamTag);
-    if (!upstream) upstream = '-';
-    set('val-upstream', upstream);
-    if (a.upstreamTag) {
-      var chip = document.getElementById('chip-tag');
-      if (chip) chip.textContent = a.upstreamTag;
-    } else {
-      var chip2 = document.getElementById('chip-tag');
-      if (chip2) chip2.style.display = 'none';
-    }
 
     var commitEl = document.getElementById('lnk-commit');
     if (a.upstreamCommit) {
@@ -369,10 +349,6 @@
           if (!s || !s.current || !s.current.ref) return; // silent fallback
           var cur = s.current;
           var upstream = cur.upstreamVersion || cur.tag || '';
-          set('val-upstream', upstream || '-');
-          var chip = document.getElementById('chip-tag');
-          if (cur.tag) { chip.textContent = cur.tag; chip.style.display = ''; }
-          else { chip.style.display = 'none'; }
           var commitEl = document.getElementById('lnk-commit');
           if (cur.ref) {
             commitEl.textContent = cur.ref.slice(0, 12);
