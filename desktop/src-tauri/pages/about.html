@@ -40,6 +40,23 @@
                    align-items:flex-start; flex:1; min-width:0; }
   .engine-status .line { display:flex; align-items:center; gap:8px;
                          font-size:12px; flex-wrap:wrap; }
+  /* Inline engine-update flow: the status rows carry no label column (the
+     "发现 DeepSeek Harness 新版本 …" line stands alone), action links render
+     as small buttons pinned to the right edge of their row, and the download
+     progress bar sits on its own row aligned with the version text. */
+  #engine-status-row .label { display:none; }
+  .engine-status .mini-btn { display:inline-flex; align-items:center;
+          padding:3px 12px; border-radius:6px; background:var(--btn);
+          color:var(--btn-text); font-size:12px; font-weight:600;
+          text-decoration:none; margin-left:auto; }
+  .engine-status .mini-btn:hover { background:var(--btn-hover); }
+  .engine-status .mini-btn.ghost { background:var(--chip-bg); color:var(--fg); }
+  .engine-status .mini-btn.ghost:hover { background:var(--border); }
+  /* "Check for updates" next to the engine version becomes a small button. */
+  #lnk-engine-check { display:inline-block; margin-left:10px; padding:3px 12px;
+          border-radius:6px; background:var(--btn); color:var(--btn-text);
+          font-size:12px; font-weight:600; text-decoration:none; }
+  #lnk-engine-check:hover { background:var(--btn-hover); }
   .footer { display:flex; gap:10px; padding:14px 22px 18px;
             border-top:1px solid var(--border); }
   button { flex:1; padding:8px 10px; border:none; border-radius:8px;
@@ -188,8 +205,10 @@
       d.textContent = String(s);
       return d.innerHTML;
     }
-    function engLink(label, id) {
-      return '<a href="#" id="' + id + '" style="font-size:12px">' + engEsc(label) + '</a>';
+    function engLink(label, id, style) {
+      var cls = style === 'primary' ? ' class="mini-btn"' :
+                style === 'ghost' ? ' class="mini-btn ghost"' : '';
+      return '<a href="#" id="' + id + '"' + cls + '>' + engEsc(label) + '</a>';
     }
     function fmtMB(n) { return (n / 1048576).toFixed(1) + ' MB'; }
     function postEngine(action) {
@@ -214,7 +233,11 @@
       if (engPoll) { clearInterval(engPoll); engPoll = null; }
     }
     function engShow(parts, hideAfterMs) {
-      engVal.innerHTML = parts.join(' <span class="line">·</span> ');
+      // Each part renders as its own row — the version text, the progress
+      // bar, and the action buttons never share a line.
+      engVal.innerHTML = parts.map(function (p) {
+        return '<div class="line">' + p + '</div>';
+      }).join('');
       engRow.style.display = '';
       if (hideAfterMs) {
         engHideTimer = setTimeout(function () { engRow.style.display = 'none'; }, hideAfterMs);
@@ -261,24 +284,33 @@
         lines.push(engEsc(L.engineChecking || 'Checking for updates…'));
       } else if (s.state === 'downloading' ||
                  (s.state === 'available' && dl.state === 'downloading')) {
-        var pct = Math.round((dl.progress && dl.progress.percent) || 0);
-        lines.push(engEsc(L.engineDownloading || 'Downloading…'));
-        lines.push('<span class="line"><span class="bar"><div style="width:' + pct + '%"></div></span>' +
-                   '<span>' + pct + '%</span>' +
-                   engLink(L.engineCancel || 'Cancel', 'eng-cancel') + '</span>');
-      } else if (s.state === 'available' && dl.state === 'done') {
-        lines.push(engEsc(L.engineDownloaded || 'Downloaded, ready to install'));
-        lines.push(engLink(L.engineInstallNow || 'Install', 'eng-install'));
-      } else if (s.state === 'available') {
+        // Row 1: the version announcement (same text as the available state);
+        // row 2: the progress bar, aligned with it.
         var av = s.available || {};
         lines.push(engEsc((L.engineAvailable || 'Update available') + ' ' +
                           (av.version || '') + ' (' + fmtMB(av.size || 0) + ')'));
-        lines.push(engLink(L.engineDownload || 'Download', 'eng-download'));
+        var pct = Math.round((dl.progress && dl.progress.percent) || 0);
+        lines.push('<span class="bar"><div style="width:' + pct + '%"></div></span>' +
+                   '<span>' + pct + '%</span>' +
+                   engLink(L.engineCancel || 'Cancel', 'eng-cancel', 'ghost'));
+      } else if (s.state === 'available' && dl.state === 'done') {
+        lines.push(engEsc(L.engineDownloaded || 'Downloaded, ready to install') +
+                   engLink(L.engineInstallNow || 'Install', 'eng-install', 'primary'));
+      } else if (s.state === 'available') {
+        var av = s.available || {};
+        lines.push(engEsc((L.engineAvailable || 'Update available') + ' ' +
+                          (av.version || '') + ' (' + fmtMB(av.size || 0) + ')') +
+                   engLink(L.engineDownload || 'Download', 'eng-download', 'primary'));
       } else if (s.state === 'installing') {
         lines.push(engEsc(L.engineInstalling || 'Installing…'));
       } else if (s.state === 'error') {
-        lines.push(engEsc(ins.message || L.engineInstallFailed || 'Install failed'));
-        lines.push(engLink(L.engineCheckAgain || 'Check Again', 'eng-recheck'));
+        // Report the actual failing step: a download failure is not an
+        // install failure, and a rolled-back install has its own message.
+        var msg = (dl.state === 'error' ? (dl.message || dl.raw) : '') ||
+                  (ins.state === 'error' ? ins.message : '') ||
+                  L.engineInstallFailed || 'Install failed';
+        lines.push(engEsc(msg) +
+                   engLink(L.engineCheckAgain || 'Check Again', 'eng-recheck', 'ghost'));
       } else if (check.state === 'done' && check.result === 'uptodate') {
         lines.push(engEsc(L.engineUpToDate || 'Up to date'));
         engShow(lines, 5000);

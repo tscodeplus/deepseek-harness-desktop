@@ -79,6 +79,10 @@ export interface EngineStatus {
   download: {
     state: 'idle' | 'downloading' | 'done' | 'error';
     progress?: DownloadProgress;
+    /** Localized failure label (e.g. "下载失败") — set when state='error'. */
+    message?: string;
+    /** Raw error text (e.g. "Download failed: HTTP 416") for diagnostics. */
+    raw?: string;
   };
   install: {
     state: 'idle' | 'installing' | 'done' | 'error';
@@ -437,7 +441,11 @@ class EngineUpdater {
       const msg = e instanceof Error ? e.message : String(e);
       diagLog(`download failed: ${msg}`);
       this.state = 'error';
-      this.downloadState = { state: 'error' };
+      this.downloadState = {
+        state: 'error',
+        message: getT().updater.downloadFailed,
+        raw: msg,
+      };
       broadcastEvent('engine-error', {
         message: getT().updater.downloadFailed,
         raw: msg,

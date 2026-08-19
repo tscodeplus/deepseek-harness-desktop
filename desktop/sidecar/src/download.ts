@@ -71,6 +71,20 @@ export async function downloadResumable(
   const partPath = finalPath + '.part';
   const metaPath = finalPath + '.part.meta';
 
+  // Idempotency: a finalized file that already verifies against the expected
+  // SHA512 means the download is done — callers re-trigger downloads (e.g. the
+  // About page Download button after an install attempt) and re-fetching a
+  // 50 MB tarball would be wasteful. A stale final file failing the check is
+  // simply overwritten by the stream below.
+  if (fs.existsSync(finalPath) && sha512) {
+    const hash = createHash('sha512').update(fs.readFileSync(finalPath)).digest('base64');
+    if (hash === sha512) {
+      log(`already downloaded: ${fileName} matches sha512 — skipping`);
+      return { path: finalPath, bytes: fs.statSync(finalPath).size };
+    }
+    log(`existing ${fileName} fails sha512 — re-downloading`);
+  }
+
   // Resume / stale-cleanup.
   let existingSize = 0;
   if (fs.existsSync(partPath)) {
@@ -109,8 +123,43 @@ export async function downloadResumable(
     signal: signal ?? AbortSignal.timeout(300_000),
   });
 
-  if (!resp.ok && resp.status !== 206) {
+  if (!resp.ok && resp.status !== 206 && resp.status !== 416) {
     throw new Error(`Download failed: HTTP ${resp.status}`);
+  }
+
+  // 416 Range Not Satisfiable: the .part already covers the whole file — a
+  // previous attempt finished streaming but finalize (rename) failed, or a
+  // second call raced a completed one. Verify the .part against SHA512 and
+  // finalize it instead of erroring; re-downloading would waste the bandwidth
+  // already spent.
+  if (resp.status === 416) {
+    const partSize = fs.statSync(partPath).size;
+    if (sha512) {
+      const hash = createHash('sha512').update(fs.readFileSync(partPath)).digest('base64');
+      if (hash !== sha512) {
+        fs.unlinkSync(partPath);
+        try {
+          fs.unlinkSync(metaPath);
+        } catch {
+          /* ok */
+        }
+        throw new Error('stale .part failed sha512 — re-download required');
+      }
+      log('SHA512 verified');
+    }
+    try {
+      fs.unlinkSync(finalPath);
+    } catch {
+      /* ok — finalize below */
+    }
+    fs.renameSync(partPath, finalPath);
+    try {
+      fs.unlinkSync(metaPath);
+    } catch {
+      /* ok */
+    }
+    log(`416: .part already complete — finalized ${fileName} (${partSize} bytes)`);
+    return { path: finalPath, bytes: partSize };
   }
 
   // Determine total file size (206 + Content-Range for resume; 200 for fresh).
@@ -213,7 +262,14 @@ export async function downloadResumable(
     log('SHA512 verified');
   }
 
-  // Finalize: rename .part → final file.
+  // Finalize: rename .part → final file. Unlink first so the rename never
+  // hits an existing target (stale file that failed SHA512 above, or a
+  // Windows AV-locked handle on the old copy).
+  try {
+    fs.unlinkSync(finalPath);
+  } catch {
+    /* ok — fresh download */
+  }
   fs.renameSync(partPath, finalPath);
   try {
     fs.unlinkSync(metaPath);
