@@ -403,6 +403,9 @@ pub fn show_dialog_window(
     let label = match kind {
         "progress" => PROGRESS_LABEL,
         "spinner" => "updater-spinner",
+        // Engine update dialog — its own label so the app-update dialog and
+        // the engine-update dialog never shadow each other.
+        "engine-updater" => "engine-updater-dialog",
         _ => "updater-dialog",
     };
     log::info!("windows: show_dialog_window kind={kind} → label={label}");
@@ -453,6 +456,7 @@ pub fn close_dialog_window(app: &AppHandle, kind: &str) {
         "error" => ERROR_LABEL,
         "about" => ABOUT_LABEL,
         "plugins" => PLUGINS_LABEL,
+        "engine-updater" => "engine-updater-dialog",
         _ => "updater-dialog",
     };
     if let Some(win) = app.get_webview_window(label) {
@@ -563,9 +567,13 @@ pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
         "appName": "DeepSeek Harness Desktop",
         "desktopVersionLabel": tr("桌面端版本", "Desktop version", zh),
         "upstreamLabel": "DeepSeek Harness",
+        "engineLabel": "DeepSeek Harness",
         "upstreamVersionLabel": tr("版本", "Version", zh),
         "upstreamCommitLabel": tr("GitHub commit", "GitHub commit", zh),
         "checkUpdates": tr("检查更新", "Check for Updates", zh),
+        "checkEngineUpdates": tr("检查 DeepSeek Harness 更新", "Check DeepSeek Harness Updates", zh),
+        "engineUpToDate": tr("DeepSeek Harness 已是最新", "DeepSeek Harness is up to date", zh),
+        "engineAvailable": tr("发现 DeepSeek Harness 新版本", "DeepSeek Harness update available", zh),
         "openLogs": tr("打开日志目录", "Open Log Folder", zh),
         "close": tr("关闭", "Close", zh),
         "dshRepo": "https://github.com/deepseek-ai/deepseek-harness",

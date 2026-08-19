@@ -358,6 +358,10 @@ fn spawn_sidecar(
         .env("DSHD_BIND_ADDRESS", "127.0.0.1")
         .env("DSHD_LOG_DIR", &log_dir)
         .env("DSHD_RESOURCES_DIR", sidecar_dir)
+        // Engine runtime home: the sidecar resolves/spawns dsh from here
+        // (seed-copied from DSHD_RESOURCES_DIR on first run, swapped in
+        // place by engine updates). Stripped like every other path.
+        .env("DSHD_ENGINE_DIR", strip_verbatim(&cfg.engine_dir))
         .env("DSHD_DESKTOP_CONTROL_PORT", state.ctl_port.to_string())
         .env(
             "DSHD_SIDECAR_CONTROL_PORT",

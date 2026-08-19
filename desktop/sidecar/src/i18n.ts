@@ -29,6 +29,20 @@ interface UpdaterLocale {
   speed: string;
   githubRelease: string;
   unsignedMacBuild: string;
+  // Engine (upstream DeepSeek Harness) update dialog.
+  engineChecking: string;
+  engineUpToDate: string;
+  engineNewVersion: string;
+  engineDownloading: string;
+  engineDownloaded: string;
+  engineInstalling: string;
+  engineInstalled: string;
+  engineInstallFailed: string;
+  engineRolledBack: string;
+  engineCancel: string;
+  engineClose: string;
+  engineInstallNow: string;
+  engineDownload: string;
 }
 
 interface TrayLocale {
@@ -141,6 +155,19 @@ function fallbackLocales(): DesktopLocales {
       speed: 'Speed',
       githubRelease: 'GitHub Release',
       unsignedMacBuild: 'This build is not signed and may be blocked by macOS',
+      engineChecking: 'Checking for DeepSeek Harness updates…',
+      engineUpToDate: 'DeepSeek Harness is up to date',
+      engineNewVersion: 'A new DeepSeek Harness version is available: {{version}}',
+      engineDownloading: 'Downloading DeepSeek Harness…',
+      engineDownloaded: 'DeepSeek Harness downloaded',
+      engineInstalling: 'Installing DeepSeek Harness…',
+      engineInstalled: 'DeepSeek Harness updated to {{version}}',
+      engineInstallFailed: 'DeepSeek Harness update failed',
+      engineRolledBack: 'Update failed — rolled back to the previous version',
+      engineCancel: 'Cancel',
+      engineClose: 'Close',
+      engineInstallNow: 'Update now',
+      engineDownload: 'Download',
     },
     tray: {
       showHide: 'Show / Hide',

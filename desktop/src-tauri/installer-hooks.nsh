@@ -11,6 +11,15 @@
 
 !define NSIS_HOOK_PREUNINSTALL "NSIS_HOOK_PREUNINSTALL_"
 !macro NSIS_HOOK_PREUNINSTALL_
+  ; The engine (dsh runtime closure at ~/.dsh/engine) is regenerable — the
+  ; installer ships a seed copy and the sidecar re-seeds on first run. Always
+  ; remove it on uninstall (and on update-mode re-install, which also runs
+  ; this macro), so a leftover engine can never pin ~184MB on disk. User data
+  ; (profiles/storages/credentials under ~/.dsh) is untouched here.
+  ReadEnvStr $0 "USERPROFILE"
+  StrCmp $0 "" dshd_engine_done
+  RmDir /r "$0\.dsh\engine"
+  dshd_engine_done:
   ; $DeleteAppDataCheckboxState is set by un.ConfirmLeave (BM_GETCHECK).
   ; Skip on updates (the installer re-runs this section in update mode).
   StrCmp $UpdateMode 1 dshd_nodata

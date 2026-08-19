@@ -90,6 +90,20 @@ async function main() {
     manifest ? `ref ${manifest.ref.slice(0, 12)}` : 'missing — run `pnpm fetch:dsh` first',
   );
   check('CLI entry exists', fs.existsSync(CLI_ENTRY), CLI_ENTRY);
+  // Runtime engine provenance — the sidecar's engine-updater reads this from
+  // the closure; package-engine.cjs refuses to pack without it.
+  const engineRefFile = path.join(DSH_DIR, '.engine-ref.json');
+  let engineRef = null;
+  try {
+    engineRef = JSON.parse(fs.readFileSync(engineRefFile, 'utf8'));
+  } catch {
+    // fall through to the explicit FAIL below
+  }
+  check(
+    'engine provenance (.engine-ref.json)',
+    !!engineRef && typeof engineRef.ref === 'string' && /^[0-9a-f]{40}$/.test(engineRef.ref),
+    engineRef ? `ref ${engineRef.ref.slice(0, 12)}` : 'missing — run `pnpm fetch:dsh` first',
+  );
   if (!manifest || !fs.existsSync(CLI_ENTRY)) {
     console.error('[smoke-test] aborting: closure not built (run `pnpm fetch:dsh`)');
     process.exit(1);

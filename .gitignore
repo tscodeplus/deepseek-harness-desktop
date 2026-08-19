@@ -2,6 +2,9 @@
 desktop/.sidecar-deps/
 desktop/.dsh-build/
 desktop/src-tauri/target/
+desktop/dsh-engine-*.tar.gz
+desktop/engine-fragment-*.json
+desktop/engine-manifest.json
 desktop/src-tauri/gen/
 ui/pages/
 ui/dist/

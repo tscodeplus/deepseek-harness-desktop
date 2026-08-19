@@ -1,0 +1,192 @@
+# engine-build.yml — build and publish the DeepSeek Harness engine closure
+# (upstream dsh) as release assets under the fixed `engine` prerelease tag.
+#
+# The desktop app's sidecar (engine-updater.ts) fetches engine-manifest.json
+# from that release and swaps the matching platform tarball in at runtime —
+# upstream releases no longer require a desktop release.
+#
+# Stateless design: the manifest on the release IS the state. `detect`
+# compares the upstream's latest tag against the already-published manifest;
+# a difference triggers the 3-platform build matrix and an atomic publish
+# (upload --clobber + stale asset cleanup).
+#
+# Triggered daily (01:00 UTC, off the 02:00 check-upstream cron) and
+# manually via workflow_dispatch (inputs.ref overrides the target for tests,
+# e.g. "dsh-v0.1.0-rc.7" or a full sha).
+
+name: engine-build
+
+on:
+  schedule:
+    - cron: '13 1 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Override target ref/tag (test only, e.g. dsh-v0.1.0-rc.7)'
+        required: false
+      force:
+        description: 'Force rebuild + publish even if the manifest already matches'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: deepseek-ai/deepseek-harness
+  DESKTOP_REPO: tscodeplus/deepseek-harness-desktop
+  ENGINE_TAG: engine
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      changed: ${{ steps.resolve.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        name: Resolve target ref and compare with published manifest
+        run: |
+          set -euo pipefail
+          # 1. Target: dispatch override ?? latest upstream tag ?? master HEAD.
+          TARGET_INPUT="${{ github.event.inputs.ref || '' }}"
+          if [ -n "$TARGET_INPUT" ]; then
+            if [[ "$TARGET_INPUT" =~ ^[0-9a-f]{40}$ ]]; then
+              REF="$TARGET_INPUT"
+              TAG=""
+            else
+              REF="$(git ls-remote https://github.com/$UPSTREAM_REPO.git "refs/tags/$TARGET_INPUT" | cut -f1)"
+              TAG="$TARGET_INPUT"
+            fi
+          else
+            TAG="$(git ls-remote --tags --refs https://github.com/$UPSTREAM_REPO.git | sed 's#.*refs/tags/##' | sort -V | tail -1)"
+            REF="$(git ls-remote https://github.com/$UPSTREAM_REPO.git "refs/tags/$TAG" | cut -f1)"
+          fi
+          [ -n "$REF" ] || { echo "could not resolve ref"; exit 1; }
+          VERSION="${TAG#dsh-v}"
+          [ -n "$VERSION" ] || VERSION="$REF"
+          echo "resolved: ref=$REF tag=${TAG:-<none>} version=$VERSION"
+          # 2. Already-published manifest (404 → never published → build).
+          MANIFEST="$(curl -sfL "https://github.com/$DESKTOP_REPO/releases/download/$ENGINE_TAG/engine-manifest.json" || true)"
+          FORCE="${{ github.event.inputs.force || 'false' }}"
+          if [ "$FORCE" = "true" ]; then
+            CHANGED="true"
+            echo "force rebuild requested — building"
+          elif [ -n "$MANIFEST" ]; then
+            PUBLISHED_REF="$(node -e "const m=JSON.parse(process.argv[1]);const p=m.platforms||{};const refs=Object.values(p).map(x=>x.ref);process.stdout.write([...new Set(refs)].join(' '))" "$MANIFEST")"
+            if [ "$PUBLISHED_REF" = "$REF" ]; then
+              CHANGED="false"
+              echo "manifest already at $REF — skipping build"
+            else
+              echo "published $PUBLISHED_REF != $REF — building"
+            fi
+          else
+            echo "no engine release yet — building"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            bundle_platform: win32-x64
+          - runner: macos-15-intel
+            bundle_platform: darwin-x64
+          - runner: macos-14
+            bundle_platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      DSHD_TARGET_PLATFORM: ${{ matrix.bundle_platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin the target ref in dsh-ref.json
+        run: node -e "const fs=require('fs');const p='desktop/dsh-ref.json';const d=JSON.parse(fs.readFileSync(p,'utf8'));d.ref='${{ needs.detect.outputs.ref }}';d.tag='${{ needs.detect.outputs.tag }}'||null;d.upstreamVersion='${{ needs.detect.outputs.version }}';d.mode=d.tag?'release':'commit';d.note=d.note||'engine channel build';fs.writeFileSync(p,JSON.stringify(d,null,2)+'\n')"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          # MUST match desktop/.node-version — the bundled runtime ABI.
+          node-version-file: desktop/.node-version
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - name: Cache dsh build closure
+        uses: actions/cache@v4
+        with:
+          path: desktop/.dsh-build
+          key: dsh-build-engine-${{ matrix.bundle_platform }}-${{ needs.detect.outputs.ref }}
+      - name: Install
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+      - name: Fetch + build dsh closure
+        working-directory: desktop
+        run: node scripts/fetch-dsh.cjs
+      - name: Bundle deps
+        working-directory: desktop
+        run: pnpm bundle-deps
+      - name: Package engine asset
+        working-directory: desktop
+        run: node scripts/package-engine.cjs
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.bundle_platform }}
+          path: |
+            desktop/dsh-engine-*.tar.gz
+            desktop/engine-fragment-*.json
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Stage fragments + tarballs
+        run: |
+          mkdir -p desktop
+          find artifacts -name 'dsh-engine-*.tar.gz' -exec cp {} desktop/ \;
+          find artifacts -name 'engine-fragment-*.json' -exec cp {} desktop/ \;
+          ls -la desktop/dsh-engine-*.tar.gz desktop/engine-fragment-*.json
+      - name: Merge manifest
+        working-directory: desktop
+        run: node scripts/merge-engine-manifest.cjs
+      - name: Publish to the engine release
+        run: |
+          set -euo pipefail
+          # Create once (fixed prerelease tag); upload with --clobber after.
+          gh release create $ENGINE_TAG \
+            --prerelease --title "DeepSeek Harness Engine" \
+            --notes "Engine closure for the desktop app — published automatically by engine-build.yml. Assets: dsh-engine-<platform>-<sha12>.tar.gz + engine-manifest.json (the desktop sidecar's source of truth)." \
+            --target master || true
+          gh release upload $ENGINE_TAG desktop/dsh-engine-*.tar.gz desktop/engine-manifest.json --clobber
+          # Stale cleanup: keep only the assets the fresh manifest references.
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('desktop/engine-manifest.json', 'utf8'));
+            const keep = new Set([...Object.values(m.platforms).map(p => p.file), 'engine-manifest.json']);
+            const { execSync } = require('child_process');
+            const out = execSync('gh release view $ENGINE_TAG --json assets -q .[].name', { encoding: 'utf8' });
+            for (const name of out.trim().split('\n').filter(Boolean)) {
+              if (!keep.has(name) && (name.startsWith('dsh-engine-') || name === 'engine-manifest.json')) {
+                console.log('deleting stale asset:', name);
+                execSync('gh release delete-asset $ENGINE_TAG ' + name + ' --yes');
+              }
+            }
+          "
+      - name: Verify the published manifest
+        run: |
+          curl -sfL "https://github.com/$DESKTOP_REPO/releases/download/$ENGINE_TAG/engine-manifest.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const m=JSON.parse(s);const ok=Object.keys(m.platforms).length===3;console.log('platforms:',Object.keys(m.platforms).join(','));if(!ok)process.exit(1)})"

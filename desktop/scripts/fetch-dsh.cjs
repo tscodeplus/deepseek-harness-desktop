@@ -143,14 +143,48 @@ function main() {
   sh(`git remote add origin ${UPSTREAM}`, DSH_DIR);
 
   console.log(`[fetch-dsh] fetching ref ${ref} ...`);
+  // Larger POST buffer + HTTP/1.1 reduce early-EOF disconnects on big
+  // fetches (Windows git's schannel backend drops HTTP/2 connections).
+  sh('git config http.postBuffer 524288000', DSH_DIR);
+  sh('git config http.version HTTP/1.1', DSH_DIR);
+  const fetchRef = (shallow) => {
+    // A failed shallow fetch may be a deep commit OR a flaky network; the
+    // repo may carry no shallow state at all, in which case `--unshallow`
+    // errors with "does not make sense". Probe first, then plain full fetch.
+    if (!shallow) {
+      try {
+        const isShallow = execSync('git rev-parse --is-shallow-repository', {
+          cwd: DSH_DIR,
+          encoding: 'utf8',
+        }).trim();
+        if (isShallow === 'true') sh('git fetch --unshallow origin', DSH_DIR);
+      } catch {
+        /* not shallow — plain fetch below */
+      }
+    }
+    // Flaky networks drop mid-fetch; retry a few times before giving up.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        sh(
+          shallow
+            ? `git fetch --depth 1 origin ${ref}`
+            : `git fetch origin ${ref}`,
+          DSH_DIR,
+        );
+        return;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        console.log(`[fetch-dsh] fetch attempt ${attempt} failed — retrying`);
+      }
+    }
+  };
   try {
     // Shallow fetch of the exact ref (works for tags and for commits reachable
     // from the default branch).
-    sh(`git fetch --depth 1 origin ${ref}`, DSH_DIR);
+    fetchRef(true);
   } catch {
-    console.log('[fetch-dsh] shallow fetch failed (likely a deep commit) — falling back to full fetch');
-    sh('git fetch --unshallow origin', DSH_DIR);
-    sh(`git fetch origin ${ref}`, DSH_DIR);
+    console.log('[fetch-dsh] shallow fetch failed — falling back to full fetch');
+    fetchRef(false);
   }
   sh(`git checkout --detach --force ${ref}`, DSH_DIR);
 
@@ -188,6 +222,26 @@ function main() {
   };
   fs.writeFileSync(MANIFEST_FILE, JSON.stringify(manifest, null, 2) + '\n');
   console.log(`[fetch-dsh] done — provenance manifest at ${MANIFEST_FILE}`);
+
+  // Runtime engine provenance — travels inside the built closure itself so
+  // the sidecar (engine-updater.ts readEngineRef) and package-engine.cjs can
+  // read the current engine version at runtime without touching dsh-ref.json
+  // (which is not packaged). bundle-deps copyRuntimeDist carries it through
+  // untouched (not in RUNTIME_DIST_SKIP_DIRS).
+  const engineRefFile = path.join(DSH_DIR, '.engine-ref.json');
+  const engineRef = {
+    ref,
+    tag: refDoc.tag ?? null,
+    upstreamVersion:
+      refDoc.upstreamVersion ?? (refDoc.tag ? refDoc.tag.replace(/^dsh-v/i, '') : null),
+    platform: TARGET_PLATFORM,
+    mode: refDoc.mode ?? 'commit',
+    note: refDoc.note ?? '',
+    builtAt: new Date().toISOString(),
+    cliEntry: fs.existsSync(CLI_ENTRY) ? CLI_ENTRY : null,
+  };
+  fs.writeFileSync(engineRefFile, JSON.stringify(engineRef, null, 2) + '\n');
+  console.log(`[fetch-dsh] engine provenance at ${engineRefFile}`);
 
   // Keep the closure free of git metadata (see header comment).
   const gitDir = path.join(DSH_DIR, '.git');

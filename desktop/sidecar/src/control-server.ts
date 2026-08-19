@@ -56,9 +56,99 @@ export const updaterEvents = new EventEmitter();
  */
 const updaterPages = new Map<string, string>();
 
-/** Cache the dialog HTML for the given kind (called by updater.ts). */
+/** Cache the dialog HTML for the given kind (called by updater.ts /
+ *  engine-updater.ts via showWindow). */
 export function cachePage(kind: string, html: string): void {
   updaterPages.set(kind, html);
+}
+
+/**
+ * Dialog window shim — the updater/engine dialog pages are plain web content
+ * served from the sidecar control API (same origin), so their buttons talk to
+ * the control API directly (token from the window URL). Window close goes
+ * sidecar → shell control service (`POST /close-window`), which closes the
+ * Rust window. Extended with engine-* actions/events for the engine update
+ * dialog; existing dialogs are unaffected (unused listeners never fire).
+ */
+export function withDialogShim(kind: string, html: string): string {
+  const shim = `<script>
+window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
+(function () {
+  var q = new URLSearchParams(location.search);
+  var token = q.get('token') || '';
+  var base = location.origin;
+  function ctl(path, body) {
+    var sep = path.indexOf('?') >= 0 ? '&' : '?';
+    return fetch(base + path + sep + 'token=' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : '{}'
+    }).catch(function () {});
+  }
+  var listeners = {
+    'update-download-progress': [],
+    'update-downloaded': [],
+    'update-error': []
+  };
+  var engineListeners = {
+    'engine-available': [],
+    'engine-not-available': [],
+    'engine-download-progress': [],
+    'engine-downloaded': [],
+    'engine-installing': [],
+    'engine-installed': [],
+    'engine-error': []
+  };
+  function on(list, type, e) {
+    var data;
+    try { data = JSON.parse(e.data); } catch (_) { return; }
+    list[type].forEach(function (f) { f(data); });
+  }
+  var es = new EventSource(base + '/_desktop/events?token=' + encodeURIComponent(token));
+  es.addEventListener('update-download-progress', function (e) { on(listeners, 'update-download-progress', e); });
+  es.addEventListener('update-downloaded', function (e) { on(listeners, 'update-downloaded', e); });
+  es.addEventListener('update-error', function (e) { on(listeners, 'update-error', e); });
+  es.addEventListener('engine-available', function (e) { on(engineListeners, 'engine-available', e); });
+  es.addEventListener('engine-not-available', function (e) { on(engineListeners, 'engine-not-available', e); });
+  es.addEventListener('engine-download-progress', function (e) { on(engineListeners, 'engine-download-progress', e); });
+  es.addEventListener('engine-downloaded', function (e) { on(engineListeners, 'engine-downloaded', e); });
+  es.addEventListener('engine-installing', function (e) { on(engineListeners, 'engine-installing', e); });
+  es.addEventListener('engine-installed', function (e) { on(engineListeners, 'engine-installed', e); });
+  es.addEventListener('engine-error', function (e) { on(engineListeners, 'engine-error', e); });
+  window.__dshDialog = {
+    close: function () { ctl('/_desktop/dialog/close', { kind: window.__DSHD_DIALOG_KIND || '' }); },
+    downloadUpdate: function () { ctl('/_desktop/updater/download'); },
+    cancelDownload: function () { ctl('/_desktop/updater/cancel'); },
+    installUpdate: function () { ctl('/_desktop/updater/install'); },
+    onUpdateDownloadProgress: function (f) { listeners['update-download-progress'].push(f); },
+    onUpdateDownloaded: function (f) { listeners['update-downloaded'].push(f); },
+    onUpdateError: function (f) { listeners['update-error'].push(f); },
+    engineCheck: function () { ctl('/_desktop/engine/check'); },
+    engineDownload: function () { ctl('/_desktop/engine/download'); },
+    engineCancel: function () { ctl('/_desktop/engine/cancel'); },
+    engineInstall: function () { ctl('/_desktop/engine/install'); },
+    onEngineAvailable: function (f) { engineListeners['engine-available'].push(f); },
+    onEngineNotAvailable: function (f) { engineListeners['engine-not-available'].push(f); },
+    onEngineDownloadProgress: function (f) { engineListeners['engine-download-progress'].push(f); },
+    onEngineDownloaded: function (f) { engineListeners['engine-downloaded'].push(f); },
+    onEngineInstalling: function (f) { engineListeners['engine-installing'].push(f); },
+    onEngineInstalled: function (f) { engineListeners['engine-installed'].push(f); },
+    onEngineError: function (f) { engineListeners['engine-error'].push(f); }
+  };
+})();
+</script>`;
+  return html.replace('</head>', `${shim}</head>`);
+}
+
+/**
+ * Open (or focus) a dialog window with the given kind. The Rust shell builds
+ * the window against a real http:// page (data: URLs are rejected by the
+ * remote-origin ACL), so the HTML is cached here and served from the control
+ * API; /show-window only carries geometry.
+ */
+export function showWindow(kind: string, html: string, width: number, height: number, dark: boolean): void {
+  cachePage(kind, withDialogShim(kind, html));
+  void postToShell('/show-window', { kind, width, height, dark });
 }
 
 const sseClients = new Set<ServerResponse>();
@@ -229,6 +319,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ControlSe
       return;
     }
 
+    if (path.startsWith('/_desktop/engine/')) {
+      await handleEngine(path, method, req, res);
+      return;
+    }
+
     if (path.startsWith('/_desktop/plugin/')) {
       await handlePlugin(path, method, url, req, res);
       return;
@@ -341,6 +436,48 @@ async function handleUpdater(
     }
   } catch (e) {
     json(res, 501, { error: `updater not available: ${e instanceof Error ? e.message : e}` });
+  }
+}
+
+// -- engine routes: DeepSeek Harness engine (upstream dsh) update channel ---
+
+async function handleEngine(
+  path: string,
+  method: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const action = path.slice('/_desktop/engine/'.length);
+  try {
+    const updater = await import('./engine-updater.js');
+    if (action === 'status' && method === 'GET') {
+      json(res, 200, updater.getEngineUpdater().status());
+      return;
+    }
+    if (action === 'check' && method === 'POST') {
+      const body = (await readJson(req)) as { fromTray?: boolean };
+      void updater.getEngineUpdater().checkForUpdate({ showDialog: body?.fromTray === true });
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (action === 'download' && method === 'POST') {
+      void updater.getEngineUpdater().downloadUpdate();
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (action === 'install' && method === 'POST') {
+      void updater.getEngineUpdater().installUpdate();
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (action === 'cancel' && method === 'POST') {
+      updater.getEngineUpdater().cancelDownload();
+      json(res, 200, { ok: true });
+      return;
+    }
+    json(res, 404, { error: `unknown engine action: ${action}` });
+  } catch (e) {
+    json(res, 501, { error: `engine updater not available: ${e instanceof Error ? e.message : e}` });
   }
 }
 

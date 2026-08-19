@@ -26,6 +26,10 @@ pub struct ShellConfig {
     pub server_port: u16,
     /// Root of the bundled sidecar (prod: `<resources>/sidecar`, dev: `<repo>/desktop/.sidecar-deps`).
     pub resources_dir: PathBuf,
+    /// Engine (dsh runtime closure) home — `<data_dir>/engine`. The engine
+    /// lives under the data root (same volume) so runtime updates can swap
+    /// directories atomically, and outside the read-only install dir.
+    pub engine_dir: PathBuf,
     pub app_version: String,
 }
 
@@ -52,6 +56,7 @@ impl ShellConfig {
             log_dir: data_dir.join("logs"),
             server_port,
             resources_dir,
+            engine_dir: data_dir.join("engine"),
             app_version: version,
         }
     }

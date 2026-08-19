@@ -10,14 +10,14 @@
 //      the installer DETACHED and exits)
 //   6. BrowserWindow dialogs → POST shell /show-window
 
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { marked } from 'marked';
 
-import { broadcastEvent, cachePage } from './control-server.js';
+import { broadcastEvent, cachePage, showWindow, withDialogShim } from './control-server.js';
+import { downloadResumable, DownloadCancelledError } from './download.js';
 import { loadConfig } from './config.js';
 import { getT, interpolate } from './i18n.js';
 import { fetchWithProxy } from './net.js';
@@ -213,64 +213,6 @@ async function shellFetch(pathname: string, body?: unknown): Promise<void> {
   } catch (e) {
     diagLog(`shellFetch(${pathname}) failed: ${e instanceof Error ? e.message : e}`);
   }
-}
-
-function showWindow(kind: string, html: string, width: number, height: number, dark: boolean): void {
-  // The Rust shell builds the dialog window against a real http:// page
-  // (data: URLs are rejected by the remote-origin ACL), so the HTML is cached
-  // here and served from the control API; /show-window only carries geometry.
-  cachePage(kind, withDialogShim(kind, html));
-  void shellFetch('/show-window', { kind, width, height, dark });
-}
-
-/**
- * Dialog window shim — the updater dialog pages are plain web content served
- * from the sidecar control API (same origin), so their buttons talk to the
- * control API directly (token from the window URL). Window close goes
- * sidecar → shell control service (`POST /close-window`), which closes the
- * Rust window.
- */
-function withDialogShim(kind: string, html: string): string {
-  const shim = `<script>
-window.__DSHD_DIALOG_KIND = ${JSON.stringify(kind)};
-(function () {
-  var q = new URLSearchParams(location.search);
-  var token = q.get('token') || '';
-  var base = location.origin;
-  function ctl(path, body) {
-    var sep = path.indexOf('?') >= 0 ? '&' : '?';
-    return fetch(base + path + sep + 'token=' + encodeURIComponent(token), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : '{}'
-    }).catch(function () {});
-  }
-  var listeners = {
-    'update-download-progress': [],
-    'update-downloaded': [],
-    'update-error': []
-  };
-  function on(type, e) {
-    var data;
-    try { data = JSON.parse(e.data); } catch (_) { return; }
-    listeners[type].forEach(function (f) { f(data); });
-  }
-  var es = new EventSource(base + '/_desktop/events?token=' + encodeURIComponent(token));
-  es.addEventListener('update-download-progress', function (e) { on('update-download-progress', e); });
-  es.addEventListener('update-downloaded', function (e) { on('update-downloaded', e); });
-  es.addEventListener('update-error', function (e) { on('update-error', e); });
-  window.__dshDialog = {
-    close: function () { ctl('/_desktop/dialog/close', { kind: window.__DSHD_DIALOG_KIND || '' }); },
-    downloadUpdate: function () { ctl('/_desktop/updater/download'); },
-    cancelDownload: function () { ctl('/_desktop/updater/cancel'); },
-    installUpdate: function () { ctl('/_desktop/updater/install'); },
-    onUpdateDownloadProgress: function (f) { listeners['update-download-progress'].push(f); },
-    onUpdateDownloaded: function (f) { listeners['update-downloaded'].push(f); },
-    onUpdateError: function (f) { listeners['update-error'].push(f); }
-  };
-})();
-</script>`;
-  return html.replace('</head>', `${shim}</head>`);
 }
 
 /** Write an updater diagnostic message to the shared diag log. */
@@ -480,6 +422,11 @@ export class AppUpdater {
       }
       diagLog('downloadUpdate: completed successfully');
     } catch (err: unknown) {
+      // User-initiated cancel keeps the .part for resume — not an error.
+      if (err instanceof DownloadCancelledError) {
+        diagLog('downloadUpdate: cancelled by user');
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       diagLog(`downloadUpdate: error caught — ${msg}`);
       console.error('[AppUpdater] Download failed');
@@ -503,160 +450,21 @@ export class AppUpdater {
       throw new Error('No files in update info');
     }
     const downloadUrl = `https://github.com/tscodeplus/deepseek-harness-desktop/releases/download/v${update.version}/${fileInfo.url}`;
-
     const downloadsDir = path.join(process.env.DSHD_HOME ?? '.', 'downloads');
-    fs.mkdirSync(downloadsDir, { recursive: true });
-    const installerPath = path.join(downloadsDir, fileInfo.url);
-    const partPath = installerPath + '.part';
-    const metaPath = installerPath + '.part.meta';
 
-    // Resume / stale-cleanup.
-    let existingSize = 0;
-    if (fs.existsSync(partPath)) {
-      let partVersion = '';
-      try {
-        if (fs.existsSync(metaPath)) {
-          partVersion = (JSON.parse(fs.readFileSync(metaPath, 'utf8')) as { version?: string }).version ?? '';
-        }
-      } catch {
-        /* corrupt meta — treat as unknown version */
-      }
-
-      if (partVersion === update.version) {
-        existingSize = fs.statSync(partPath).size;
-        diagLog(`downloadFromPendingUpdate: resuming from byte ${existingSize} (version ${update.version})`);
-      } else {
-        diagLog(`downloadFromPendingUpdate: stale .part for v${partVersion}, discarding (wanted v${update.version})`);
-        fs.unlinkSync(partPath);
-        try {
-          fs.unlinkSync(metaPath);
-        } catch {
-          /* ok */
-        }
-      }
-    }
-
-    // Fetch (with optional Range header).
-    const headers: Record<string, string> = {};
-    if (existingSize > 0) {
-      headers['Range'] = `bytes=${existingSize}-`;
-    }
-
-    diagLog(
-      `downloadFromPendingUpdate: downloading ${downloadUrl}${existingSize > 0 ? ` (resume at ${existingSize})` : ''}`,
-    );
-    const resp = await fetchWithProxy(downloadUrl, {
-      headers,
-      signal: AbortSignal.timeout(300_000),
+    // Shared resumable download (see download.ts) — same semantics as the
+    // original inline implementation: .part + .part.meta version marker,
+    // Range resume, SHA512 verify, atomic rename.
+    await downloadResumable({
+      url: downloadUrl,
+      destDir: downloadsDir,
+      fileName: fileInfo.url,
+      versionMarker: update.version,
+      sha512: fileInfo.sha512,
+      shouldCancel: () => this.downloadCancelled,
+      onProgress: (p) => this.sendProgress(p.percent, p.bytesPerSecond, p.total, p.transferred),
+      log: (m) => diagLog(`downloadFromPendingUpdate: ${m}`),
     });
-
-    if (!resp.ok && resp.status !== 206) {
-      throw new Error(`Download failed: HTTP ${resp.status}`);
-    }
-
-    // Determine total file size (206 + Content-Range for resume; 200 for fresh).
-    let totalSize: number;
-    if (resp.status === 206) {
-      const cr = resp.headers.get('content-range');
-      const m = /bytes \d+-\d+\/(\d+)/.exec(cr || '');
-      if (m) {
-        totalSize = parseInt(m[1], 10);
-      } else {
-        const cl = parseInt(resp.headers.get('content-length') || '0', 10);
-        totalSize = existingSize + cl;
-      }
-    } else {
-      totalSize = parseInt(resp.headers.get('content-length') || '0', 10);
-      if (existingSize > 0) {
-        diagLog('downloadFromPendingUpdate: server ignored Range header, restarting');
-        existingSize = 0;
-      }
-    }
-
-    const reader = resp.body?.getReader();
-    if (!reader) throw new Error('No response body');
-
-    // Write version marker so future attempts can detect version changes.
-    try {
-      fs.writeFileSync(metaPath, JSON.stringify({ version: update.version }), 'utf8');
-    } catch {
-      /* best effort */
-    }
-
-    // Stream to .part file.
-    const flags = existingSize > 0 ? 'a' : 'w';
-    const stream = fs.createWriteStream(partPath, { flags });
-
-    let downloaded = existingSize;
-    let lastPercent = existingSize > 0 ? (existingSize / totalSize) * 100 : 0;
-    let lastReportTime = Date.now();
-    let lastReportSize = existingSize;
-
-    try {
-      while (true) {
-        if (this.downloadCancelled) {
-          reader.cancel();
-          diagLog(`downloadFromPendingUpdate: cancelled (kept ${downloaded} / ${totalSize} bytes in .part)`);
-          return;
-        }
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        stream.write(value);
-        downloaded += value.length;
-
-        const now = Date.now();
-        const elapsed = now - lastReportTime;
-        if (elapsed >= 200) {
-          const bytesPerSecond = elapsed > 0 ? ((downloaded - lastReportSize) / elapsed) * 1000 : 0;
-          lastReportTime = now;
-          lastReportSize = downloaded;
-
-          const percent = totalSize > 0 ? (downloaded / totalSize) * 100 : 50;
-          // Never report a lower percentage — prevents the bar jumping backwards.
-          if (percent >= lastPercent) {
-            lastPercent = percent;
-            this.sendProgress(Math.round(percent * 10) / 10, bytesPerSecond, totalSize, downloaded);
-          }
-        }
-      }
-    } finally {
-      stream.end();
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      stream.on('finish', resolve);
-      stream.on('error', reject);
-    });
-
-    this.sendProgress(100, 0, totalSize, downloaded);
-
-    // SHA512 verification.
-    if (fileInfo.sha512) {
-      const fileBuffer = fs.readFileSync(partPath);
-      const hash = createHash('sha512').update(fileBuffer).digest('base64');
-      if (hash !== fileInfo.sha512) {
-        fs.unlinkSync(partPath);
-        try {
-          fs.unlinkSync(metaPath);
-        } catch {
-          /* ok */
-        }
-        throw new Error(
-          `SHA512 mismatch: expected ${fileInfo.sha512.slice(0, 20)}..., got ${hash.slice(0, 20)}...`,
-        );
-      }
-      diagLog('downloadFromPendingUpdate: SHA512 verified');
-    }
-
-    // Finalize: rename .part → installer.
-    fs.renameSync(partPath, installerPath);
-    try {
-      fs.unlinkSync(metaPath);
-    } catch {
-      /* ok */
-    }
-    diagLog(`downloadFromPendingUpdate: saved to ${installerPath} (${downloaded} bytes)`);
 
     this.updateDownloaded = true;
     const unsigned = this.isMacOSUnsigned();

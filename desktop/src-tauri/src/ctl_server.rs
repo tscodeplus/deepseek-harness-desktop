@@ -329,6 +329,26 @@ fn handle(app: &AppHandle, url: &str, body: &str) -> tiny_http::Response<std::io
                 }
             }
         }
+        "/engine-swap-begin" => {
+            // Engine swap (engine-updater.ts install flow): the sidecar is
+            // about to kill dsh, swap the engine closure dirs and respawn —
+            // the health loop would read the downtime as failures and pop
+            // the error window. Flip the status to Starting (fresh 60s
+            // startup window measured from now, exactly like sidecar::restart)
+            // and flag the main window for reload once the new engine
+            // answers. The sidecar process itself is untouched.
+            let app2 = app.clone();
+            let port = crate::config::ShellConfig::load(&app).server_port;
+            tauri::async_runtime::spawn(async move {
+                let state = app2.state::<Arc<SidecarState>>().clone();
+                state.mark_starting(port).await;
+            });
+            let state = app.state::<Arc<SidecarState>>().clone();
+            state
+                .reload_main_on_recover
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            ok("starting")
+        }
         "/restart-service" => {
             // Error-window "Restart Service" button: same entry point as the
             // tray menu (sidecar::restart).

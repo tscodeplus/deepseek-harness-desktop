@@ -68,6 +68,13 @@
     <span class="label" id="lbl-commit"></span>
     <span class="value"><a id="lnk-commit"></a></span>
   </div>
+  <div class="row">
+    <span class="label" id="lbl-engine"></span>
+    <span class="value">
+      <span id="val-engine"></span>
+      <a id="lnk-engine-check" href="#" style="font-size:12px"></a>
+    </span>
+  </div>
 </div>
 <div class="footer">
   <button class="secondary" id="btn-open-logs"></button>
@@ -150,6 +157,42 @@
       post('http://127.0.0.1:' + port + '/_desktop/updater/check', a.sidecarToken,
            { includeBeta: false, fromTray: true }).catch(function () {});
     };
+
+    // Engine (upstream DeepSeek Harness) version — refreshed at runtime from
+    // the sidecar control API so engine updates show here without a desktop
+    // release. The injected (compile-time) values are the fallback.
+    set('lbl-engine', L.engineLabel || 'DeepSeek Harness');
+    var engineCheckEl = document.getElementById('lnk-engine-check');
+    engineCheckEl.textContent = L.checkEngineUpdates || 'Check for updates';
+    engineCheckEl.onclick = function (e) {
+      e.preventDefault();
+      var port = a.sidecarPort;
+      if (!port) return;
+      post('http://127.0.0.1:' + port + '/_desktop/engine/check', a.sidecarToken,
+           { fromTray: true }).catch(function () {});
+    };
+    (function refreshEngineStatus() {
+      var port = a.sidecarPort;
+      if (!port) return; // heartbeat not synced yet — keep compile-time values
+      fetch('http://127.0.0.1:' + port + '/_desktop/engine/status?token=' + encodeURIComponent(a.sidecarToken || ''))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (s) {
+          if (!s || !s.current || !s.current.ref) return; // silent fallback
+          var cur = s.current;
+          var upstream = cur.upstreamVersion || cur.tag || '';
+          set('val-upstream', upstream || '-');
+          var chip = document.getElementById('chip-tag');
+          if (cur.tag) { chip.textContent = cur.tag; chip.style.display = ''; }
+          else { chip.style.display = 'none'; }
+          var commitEl = document.getElementById('lnk-commit');
+          if (cur.ref) {
+            commitEl.textContent = cur.ref.slice(0, 12);
+            commitEl.href = (L.dshRepo || 'https://github.com/deepseek-ai/deepseek-harness') + '/tree/' + cur.ref;
+          }
+          set('val-engine', upstream || cur.ref.slice(0, 12) || '-');
+        })
+        .catch(function () { /* keep compile-time values */ });
+    })();
     document.getElementById('btn-open-logs').onclick = function () {
       if (a.ctlPort) {
         post('http://127.0.0.1:' + a.ctlPort + '/open-log-dir', a.ctlToken);

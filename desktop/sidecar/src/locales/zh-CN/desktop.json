@@ -18,7 +18,20 @@
     "installAndRestart": "安装并重启",
     "speed": "速度",
     "githubRelease": "GitHub Release",
-    "unsignedMacBuild": "此版本未签名，可能被 macOS 拦截"
+    "unsignedMacBuild": "此版本未签名，可能被 macOS 拦截",
+    "engineChecking": "正在检查 DeepSeek Harness 更新…",
+    "engineUpToDate": "DeepSeek Harness 已是最新版本",
+    "engineNewVersion": "发现新的 DeepSeek Harness 版本：{{version}}",
+    "engineDownloading": "正在下载 DeepSeek Harness…",
+    "engineDownloaded": "DeepSeek Harness 下载完成",
+    "engineInstalling": "正在安装 DeepSeek Harness…",
+    "engineInstalled": "DeepSeek Harness 已更新到 {{version}}",
+    "engineInstallFailed": "DeepSeek Harness 更新失败",
+    "engineRolledBack": "更新失败，已回滚到上一版本",
+    "engineCancel": "取消",
+    "engineClose": "关闭",
+    "engineInstallNow": "立即更新",
+    "engineDownload": "下载"
   },
   "tray": {
     "showHide": "显示 / 隐藏",
