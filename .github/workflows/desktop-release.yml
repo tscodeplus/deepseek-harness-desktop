@@ -119,11 +119,16 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.cache_key }}-
 
+      # The closure's build behavior lives in fetch-dsh.cjs (build env, e.g.
+      # DSH_BUILD_CLIENT_PROFILE=official) and bundle-deps.cjs (what gets
+      # staged). Hash them with the ref, or a fetch-dsh change would silently
+      # reuse a stale closure via the cache fast path (v0.4.0 shipped the
+      # unbranded "DSH Local Build" engine because of exactly this).
       - name: Cache dsh build closure
         uses: actions/cache@v5
         with:
           path: desktop/.dsh-build
-          key: dsh-build-${{ matrix.bundle_platform }}-${{ hashFiles('desktop/dsh-ref.json') }}
+          key: dsh-build-${{ matrix.bundle_platform }}-${{ hashFiles('desktop/dsh-ref.json', 'desktop/scripts/fetch-dsh.cjs', 'desktop/scripts/bundle-deps.cjs') }}
 
       - name: Cache bundled Node runtime
         uses: actions/cache@v5

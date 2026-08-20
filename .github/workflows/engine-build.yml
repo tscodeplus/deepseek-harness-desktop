@@ -126,11 +126,16 @@ jobs:
           node-version-file: desktop/.node-version
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
+      # The closure's build behavior lives in fetch-dsh.cjs (build env, e.g.
+      # DSH_BUILD_CLIENT_PROFILE=official) and bundle-deps.cjs (what gets
+      # staged). Hash them with the ref, or a fetch-dsh change would silently
+      # reuse a stale closure via the cache fast path (the v0.4.0 engine was
+      # rebuilt-from-cache without the official brand for exactly this).
       - name: Cache dsh build closure
         uses: actions/cache@v4
         with:
           path: desktop/.dsh-build
-          key: dsh-build-engine-${{ matrix.bundle_platform }}-${{ needs.detect.outputs.ref }}
+          key: dsh-build-engine-${{ matrix.bundle_platform }}-${{ needs.detect.outputs.ref }}-${{ hashFiles('desktop/scripts/fetch-dsh.cjs', 'desktop/scripts/bundle-deps.cjs') }}
       - name: Install
         working-directory: desktop
         run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
