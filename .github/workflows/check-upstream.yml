@@ -86,6 +86,13 @@ jobs:
             doc.mode = process.env.MODE;
             doc.note = process.env.NOTE;
             doc.updatedBy = "check-upstream";
+            // Version derived from the upstream tag (dsh-v0.1.0-rc.8 ->
+            // 0.1.0-rc.8, same rule as fetch-dsh.cjs); null when following a
+            // commit with no tag. Keeping it stale made bot PRs regress the
+            // field (e.g. rc.8 -> rc.6) and never be merge-ready.
+            doc.upstreamVersion = process.env.TAG
+              ? process.env.TAG.replace(/^dsh-v/i, "")
+              : null;
             fs.writeFileSync("desktop/dsh-ref.json", JSON.stringify(doc, null, 2) + "\n");
           '
           git add desktop/dsh-ref.json
