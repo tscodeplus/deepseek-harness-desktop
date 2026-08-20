@@ -92,8 +92,11 @@ function spawnDsh(): ChildProcess {
     });
   } else {
     // Prod: the built CLI bundle (tsdown output) runs on the bundled Node.
+    // --no-open: since rc8, `dsh web` opens the default browser once the
+    // server is ready (upstream CLI behavior) — the desktop shell IS the
+    // browser here, so that handoff must be suppressed.
     const entry = join(dshRoot, 'apps', 'cli', 'lib', 'bin.js');
-    child = spawn(process.execPath, [entry, 'web'], {
+    child = spawn(process.execPath, [entry, 'web', '--no-open'], {
       cwd: dshRoot,
       env: dshEnv(),
       stdio: ['ignore', 'inherit', 'inherit'],
