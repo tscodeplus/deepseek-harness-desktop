@@ -13,7 +13,7 @@
 // Then serve the control API + heartbeat until shutdown, killing dsh on exit.
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,6 +27,7 @@ import {
   getEngineUpdater,
   initEngineUpdater,
 } from './engine-updater.js';
+import { compareVersions } from './updater.js';
 
 const isDev = process.env.DSHD_DEV === '1';
 const resourcesDir = process.env.DSHD_RESOURCES_DIR ?? process.cwd();
@@ -79,6 +80,25 @@ if (!isDev && applyPendingEngineStaging(engineDir)) {
 
 let dshChild: ChildProcess | null = null;
 
+/**
+ * Whether the engine closure at the given dsh-dist root accepts `--no-open`
+ * (rc8+; the automatic default-browser handoff is also new there). Older
+ * engines reject the unknown option and exit. The bundled seed closure can
+ * lag the user-updated engine, so decide per closure from its own CLI
+ * package.json — the .engine-ref.json annotation records the fetch target,
+ * not the closure's actual code version.
+ */
+function engineSupportsNoOpenFlag(root: string): boolean {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(root, 'apps', 'cli', 'package.json'), 'utf8'),
+    ) as { version?: string };
+    return typeof pkg.version === 'string' && compareVersions(pkg.version, '0.1.0-rc.8') >= 0;
+  } catch {
+    return false; // unknown closure — stay compatible, pass no flag
+  }
+}
+
 function spawnDsh(): ChildProcess {
   console.log(`[sidecar] starting dsh web (dev=${isDev}, root=${dshRoot})`);
   let child: ChildProcess;
@@ -94,9 +114,13 @@ function spawnDsh(): ChildProcess {
     // Prod: the built CLI bundle (tsdown output) runs on the bundled Node.
     // --no-open: since rc8, `dsh web` opens the default browser once the
     // server is ready (upstream CLI behavior) — the desktop shell IS the
-    // browser here, so that handoff must be suppressed.
+    // browser here, so that handoff must be suppressed. Only pass it when
+    // the closure understands it (rc8+); older closures exit on the
+    // unknown option.
     const entry = join(dshRoot, 'apps', 'cli', 'lib', 'bin.js');
-    child = spawn(process.execPath, [entry, 'web', '--no-open'], {
+    const webArgs = ['web'];
+    if (engineSupportsNoOpenFlag(dshRoot)) webArgs.push('--no-open');
+    child = spawn(process.execPath, [entry, ...webArgs], {
       cwd: dshRoot,
       env: dshEnv(),
       stdio: ['ignore', 'inherit', 'inherit'],
