@@ -62,7 +62,10 @@ jobs:
               TAG="$TARGET_INPUT"
             fi
           else
-            TAG="$(git ls-remote --tags --refs https://github.com/$UPSTREAM_REPO.git | sed 's#.*refs/tags/##' | sort -V | tail -1)"
+            # Only dsh-v* tags are engine candidates — sort -V across all
+            # upstream tags could otherwise select a foreign line (e.g. a
+            # plain v1.0.0 sorts after dsh-v0.1.0-rc.* and would win).
+            TAG="$(git ls-remote --tags --refs https://github.com/$UPSTREAM_REPO.git 'refs/tags/dsh-v*' | sed 's#.*refs/tags/##' | sort -V | tail -1)"
             REF="$(git ls-remote https://github.com/$UPSTREAM_REPO.git "refs/tags/$TAG" | cut -f1)"
           fi
           [ -n "$REF" ] || { echo "could not resolve ref"; exit 1; }
