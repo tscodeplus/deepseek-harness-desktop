@@ -97,8 +97,9 @@ export interface EngineStatus {
 export interface EngineRuntimeDeps {
   /** <DSHD_HOME>/engine — the live engine closure home. */
   engineDir: string;
-  /** Bundled install-dir closure (…/dsh-dist). dsh runs from here until the
-   *  user's first engine update swaps a closure into ~/.dsh/engine. */
+  /** Bundled install-dir closure home (same layout as engineDir — contains
+   *  dsh-dist/ + node_modules/). dsh runs from here until the user's first
+   *  engine update swaps a closure into ~/.dsh/engine. */
   bundledRoot: string;
   /** Kill the running dsh child (graceful SIGTERM → SIGKILL). */
   killDsh: () => Promise<void>;
@@ -661,7 +662,9 @@ class EngineUpdater {
         diagLog('restart: rollback — no previous closure, back to bundled install dir');
       }
       await postToShell('/engine-swap-begin', {});
-      this.deps.respawn(liveExists ? path.join(engineDir, 'dsh-dist') : this.deps.bundledRoot);
+      this.deps.respawn(
+        liveExists ? path.join(engineDir, 'dsh-dist') : path.join(this.deps.bundledRoot, 'dsh-dist'),
+      );
       if (await waitForHealth(60_000)) {
         this.state = 'idle';
         this.installState = { state: 'error', message: t.engineRolledBack };

@@ -162,7 +162,7 @@ const controlServer = createControlServer({
 const ENGINE_STARTUP_CHECK_ENABLED = false;
 initEngineUpdater({
   engineDir,
-  bundledRoot: join(resourcesDir, 'dsh-dist'),
+  bundledRoot: resourcesDir,
   killDsh: () => stopDshChild('engine-swap'),
   respawn: (root) => {
     dshRoot = root;

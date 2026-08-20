@@ -72,18 +72,21 @@ jobs:
           # 2. Already-published manifest (404 → never published → build).
           MANIFEST="$(curl -sfL "https://github.com/$DESKTOP_REPO/releases/download/$ENGINE_TAG/engine-manifest.json" || true)"
           FORCE="${{ github.event.inputs.force || 'false' }}"
+          # CHANGED must always be set (the step runs with `set -uo pipefail`).
+          CHANGED="false"
           if [ "$FORCE" = "true" ]; then
             CHANGED="true"
             echo "force rebuild requested — building"
           elif [ -n "$MANIFEST" ]; then
             PUBLISHED_REF="$(node -e "const m=JSON.parse(process.argv[1]);const p=m.platforms||{};const refs=Object.values(p).map(x=>x.ref);process.stdout.write([...new Set(refs)].join(' '))" "$MANIFEST")"
             if [ "$PUBLISHED_REF" = "$REF" ]; then
-              CHANGED="false"
               echo "manifest already at $REF — skipping build"
             else
+              CHANGED="true"
               echo "published $PUBLISHED_REF != $REF — building"
             fi
           else
+            CHANGED="true"
             echo "no engine release yet — building"
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
