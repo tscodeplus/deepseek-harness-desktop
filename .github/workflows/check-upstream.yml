@@ -30,8 +30,10 @@ jobs:
           CURRENT_REF="$(node -p "JSON.parse(process.argv[1]).ref" "$REF_DOC")"
           echo "current ref: ${CURRENT_REF}"
 
-          # Newest tag (if any) and master HEAD.
-          NEWEST_TAG="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git \
+          # Newest dsh-v tag (if any) and master HEAD. The tag pattern is
+          # explicit — a foreign line (e.g. a plain v1.0.0) sorts after
+          # dsh-v0.1.0-rc.* under sort -V and would be followed instead.
+          NEWEST_TAG="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git 'refs/tags/dsh-v*' \
             | awk -F/ '{print $NF}' | sort -V | tail -1 || true)"
           MASTER_HEAD="$(git ls-remote https://github.com/deepseek-ai/deepseek-harness.git refs/heads/master \
             | awk '{print $1}')"
@@ -88,7 +90,10 @@ jobs:
           '
           git add desktop/dsh-ref.json
           git commit -m "chore: bump dsh ref to ${TARGET_REF:0:12} ($MODE)"
-          git push -u origin "$BRANCH" 2>&1 | tail -3
+          # Force: this branch exists only to carry this bump PR (name = the
+          # target ref). A previous run may have pushed it already — a plain
+          # push would fail on the non-fast-forward.
+          git push -f origin "$BRANCH" 2>&1 | tail -3
           # Idempotent: an existing PR for this branch is fine (its head is
           # already pushed with the new ref).
           gh pr create \
