@@ -298,7 +298,10 @@
                           (av.version || '') + ' (' + fmtMB(av.size || 0) + ')') +
                    engLink(L.engineDownload || 'Download', 'eng-download', 'primary'));
       } else if (s.state === 'installing' || ins.state === 'installing') {
-        lines.push(engEsc(L.engineInstalling || 'Installing…'));
+        // restartUpdate sets ins.message ("Restarting…") — show it over the
+        // generic label; it carries no progress, so the bar below is
+        // indeterminate during the swap instead of a fake percentage.
+        lines.push(engEsc(ins.message || L.engineInstalling || 'Installing…'));
         if (typeof ins.progress === 'number' && ins.progress >= 0) {
           var ipct = Math.min(100, Math.round(ins.progress));
           lines.push('<span class="bar"><div style="width:' + ipct + '%"></div></span>' +

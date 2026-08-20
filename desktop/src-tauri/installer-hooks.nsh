@@ -31,10 +31,34 @@
 ; false, so the hook never compiled into the installer at all (verified
 ; with makensis /V4 on a probe script; a stale engine survived re-install
 ; because the hook was absent, not because RmDir failed).
+;
+; After removing the stale engine, copy the bundled seed closure
+; ($INSTDIR\sidecar\dsh-dist + node_modules, ~184MB — the same two top-level
+; dirs the sidecar's ensureEngine seeds from) so first launch after
+; install/reinstall starts instantly. Failure (disk full, AV lock) does NOT
+; abort the install: the sidecar re-seeds on first boot as the fallback, so
+; this copy is strictly an optimization. SetDetailsPrint none keeps the
+; node_modules tree (tens of thousands of files) from flooding the install
+; log; lastused restores whatever the template had.
 !macro NSIS_HOOK_POSTINSTALL
   ReadEnvStr $0 "USERPROFILE"
   StrCmp $0 "" dshd_inst_done
   RmDir /r "$0\.dsh\engine"
+  SetDetailsPrint textonly
+  DetailPrint "Preparing engine..."
+  SetDetailsPrint none
+  ClearErrors
+  CreateDirectory "$0\.dsh\engine"
+  ; CopyFiles takes ONE source per call (source destination [total_size]);
+  ; /SILENT suppresses the system copy-progress dialog for the 38MB+ node_modules
+  ; tree (the install page's own progress already covers the wait).
+  CopyFiles /SILENT "$INSTDIR\sidecar\dsh-dist" "$0\.dsh\engine\"
+  CopyFiles /SILENT "$INSTDIR\sidecar\node_modules" "$0\.dsh\engine\"
+  SetDetailsPrint lastused
+  IfErrors 0 dshd_seed_failed
+  Goto dshd_inst_done
+  dshd_seed_failed:
+    ClearErrors
   dshd_inst_done:
 !macroend
 

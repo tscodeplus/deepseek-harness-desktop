@@ -36,6 +36,7 @@ interface UpdaterLocale {
   engineDownloading: string;
   engineDownloaded: string;
   engineInstalling: string;
+  engineRestarting: string;
   engineInstalled: string;
   engineInstallFailed: string;
   engineRolledBack: string;
@@ -165,6 +166,7 @@ function fallbackLocales(): DesktopLocales {
       engineDownloading: 'Downloading DeepSeek Harness…',
       engineDownloaded: 'DeepSeek Harness downloaded',
       engineInstalling: 'Installing DeepSeek Harness…',
+      engineRestarting: 'Restarting DeepSeek Harness…',
       engineInstalled: 'DeepSeek Harness updated to {{version}}',
       engineInstallFailed: 'DeepSeek Harness update failed',
       engineRolledBack: 'Update failed — rolled back to the previous version',

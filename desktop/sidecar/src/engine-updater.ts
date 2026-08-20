@@ -287,8 +287,10 @@ ${css}
     hide('bar-wrap');
     state(L.engineDownloaded, L.engineInstallNow, function () { d.engineInstall(); }, L.engineClose, function () { d.close(); });
   });
-  d.onEngineInstalling(function () {
-    state(L.engineInstalling, null, null, L.engineClose, function () { d.close(); });
+  d.onEngineInstalling(function (ev) {
+    // restartUpdate broadcasts a "Restarting…" message — show it; the plain
+    // extraction flow keeps the generic "Installing…" label.
+    state((ev && ev.message) || L.engineInstalling, null, null, L.engineClose, function () { d.close(); });
   });
   d.onEngineInstallProgress(function (ev) {
     show('bar-wrap');
@@ -584,15 +586,21 @@ class EngineUpdater {
       diagLog('restart: no staged update');
       return;
     }
+    const t = getT().updater;
     this.state = 'installing';
-    this.installState = { state: 'installing', progress: 90 };
-    broadcastEvent('engine-installing', { version: this.available?.version ?? '' });
+    // No fake percentage here: the swap (kill → rename → respawn) plus the
+    // health check takes a few seconds with no measurable progress — show
+    // "Restarting…" (indeterminate in the UI) instead of a stuck 90%.
+    this.installState = { state: 'installing', message: t.engineRestarting };
+    broadcastEvent('engine-installing', {
+      version: this.available?.version ?? '',
+      message: t.engineRestarting,
+    });
 
     const engineDir = this.deps.engineDir;
     const homeDir = path.dirname(engineDir);
     const stagingDir = path.join(homeDir, 'engine.staging');
     const prevDir = path.join(homeDir, 'engine.prev');
-    const t = getT().updater;
     const stagedRef = readEngineRef(stagingDir);
 
     try {
