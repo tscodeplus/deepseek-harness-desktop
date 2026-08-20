@@ -1,7 +1,8 @@
 {
-  "ref": "47f943859bef60e4160492346772ded9b24f765a",
-  "tag": null,
+  "ref": "141eb6fef83422698aef7a981029e843e8161534",
+  "tag": "dsh-v0.1.0-rc.8",
   "upstreamVersion": "0.1.0-rc.6",
-  "mode": "commit",
-  "note": "测试用种子引擎 rc6（上游 rc6 无 git tag，npm 已发）：验证引擎独立更新通道自动检测 rc7。验证后恢复 rc7。"
+  "mode": "release",
+  "note": "跟随发版 tag dsh-v0.1.0-rc.8",
+  "updatedBy": "check-upstream"
 }
