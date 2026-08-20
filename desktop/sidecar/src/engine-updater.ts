@@ -97,10 +97,13 @@ export interface EngineStatus {
 export interface EngineRuntimeDeps {
   /** <DSHD_HOME>/engine — the live engine closure home. */
   engineDir: string;
+  /** Bundled install-dir closure (…/dsh-dist). dsh runs from here until the
+   *  user's first engine update swaps a closure into ~/.dsh/engine. */
+  bundledRoot: string;
   /** Kill the running dsh child (graceful SIGTERM → SIGKILL). */
   killDsh: () => Promise<void>;
-  /** Respawn dsh from the (possibly new) engine dir. */
-  respawn: () => void;
+  /** Respawn dsh from the given dsh-dist root (switched on engine swap). */
+  respawn: (root: string) => void;
 }
 
 /** Platform key used in the manifest and in .engine-ref.json. */
@@ -339,7 +342,10 @@ class EngineUpdater {
   private installState: EngineStatus['install'] = { state: 'idle' };
 
   constructor(private deps: EngineRuntimeDeps) {
-    this.current = readEngineRef(deps.engineDir);
+    // The running engine is either the user-updated closure at ~/.dsh/engine
+    // or (no update yet) the bundled install-dir closure — read whichever
+    // actually runs, so an up-to-date bundled seed is not flagged as stale.
+    this.current = readEngineRef(deps.engineDir) ?? readEngineRef(deps.bundledRoot);
     diagLog(
       `init: engine at ${deps.engineDir} — ${this.current ? this.current.ref.slice(0, 12) : 'no ref'}`,
     );
@@ -607,23 +613,29 @@ class EngineUpdater {
       if (!stagedRef) throw new Error('staged closure missing .engine-ref.json');
 
       // 1. Swap: shell health loop to Starting, kill dsh, rename triple.
+      //    On the FIRST update there is no live closure at ~/.dsh/engine yet
+      //    (dsh runs from the bundled install dir) — live → prev is skipped,
+      //    and there is nothing to restore on failure.
       await postToShell('/engine-swap-begin', {});
       await this.deps.killDsh();
+      const liveExists = fs.existsSync(engineDir);
       fs.rmSync(prevDir, { recursive: true, force: true });
-      fs.renameSync(engineDir, prevDir); // live → prev
+      if (liveExists) fs.renameSync(engineDir, prevDir); // live → prev
       try {
         fs.renameSync(stagingDir, engineDir); // staging → live
       } catch (e) {
-        try {
-          fs.renameSync(prevDir, engineDir); // restore
-        } catch {
-          /* engine.prev left as recovery marker — next boot cleans up */
+        if (liveExists) {
+          try {
+            fs.renameSync(prevDir, engineDir); // restore
+          } catch {
+            /* engine.prev left as recovery marker — next boot cleans up */
+          }
         }
         throw e;
       }
 
       // 2. Respawn and health-check the new engine.
-      this.deps.respawn();
+      this.deps.respawn(path.join(engineDir, 'dsh-dist'));
       if (await waitForHealth(45_000)) {
         this.current = stagedRef;
         this.state = 'idle';
@@ -637,13 +649,19 @@ class EngineUpdater {
         return;
       }
 
-      // 3. Rollback: kill the new engine, restore prev, fresh startup window.
+      // 3. Rollback: kill the new engine, restore the previous closure, fresh
+      //    startup window. Without a previous closure (first update), the
+      //    bundled install-dir closure takes over again.
       diagLog('restart: new engine failed health check — rolling back');
       await this.deps.killDsh();
       fs.rmSync(engineDir, { recursive: true, force: true });
-      fs.renameSync(prevDir, engineDir);
+      if (liveExists) {
+        fs.renameSync(prevDir, engineDir);
+      } else {
+        diagLog('restart: rollback — no previous closure, back to bundled install dir');
+      }
       await postToShell('/engine-swap-begin', {});
-      this.deps.respawn();
+      this.deps.respawn(liveExists ? path.join(engineDir, 'dsh-dist') : this.deps.bundledRoot);
       if (await waitForHealth(60_000)) {
         this.state = 'idle';
         this.installState = { state: 'error', message: t.engineRolledBack };
@@ -695,7 +713,9 @@ export function applyPendingEngineStaging(engineDir: string): boolean {
       return false;
     }
     fs.rmSync(prevDir, { recursive: true, force: true });
-    fs.renameSync(engineDir, prevDir); // live → prev
+    // First update: no live closure at ~/.dsh/engine yet (dsh runs from the
+    // bundled install dir) — skip live → prev, nothing to preserve.
+    if (fs.existsSync(engineDir)) fs.renameSync(engineDir, prevDir); // live → prev
     fs.renameSync(stagingDir, engineDir); // staging → live
     fs.rmSync(prevDir, { recursive: true, force: true });
     diagLog(`applyPendingStaging: applied staged engine ${stagedRef.ref.slice(0, 12)}`);

@@ -3,17 +3,17 @@
 //
 // Unlike OhMyAgent (whose gateway was imported in-process via bootstrap()),
 // dsh is a standalone CLI app, so the sidecar *spawns* it:
-//   · prod: `<bundled-node> <engine>/dsh-dist/apps/cli/lib/bin.js web` with
-//           cwd = engine dsh-dist (the built upstream checkout); DSH_HOME →
-//           app data. The engine lives at <DSHD_HOME>/engine — seeded from
-//           the install dir (DSHD_RESOURCES_DIR) on first run, then swapped
-//           in place by engine updates (engine-updater.ts).
+//   · prod: `<bundled-node> <root>/dsh-dist/apps/cli/lib/bin.js web` with
+//           cwd = dsh-dist (the built upstream checkout); DSH_HOME → app
+//           data. The engine runs from the bundled install-dir closure
+//           (DSHD_RESOURCES_DIR) until the user's first engine update swaps
+//           a closure into <DSHD_HOME>/engine (engine-updater.ts).
 //   · dev:  `pnpm dsh web` in DSHD_DEV_ROOT (dsh source checkout, tsx-based)
 //
 // Then serve the control API + heartbeat until shutdown, killing dsh on exit.
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,21 +39,18 @@ const dshPort = process.env.DSHD_PORT ?? '3080';
 
 // Resolved after ensureEngine(): where dsh is spawned from.
 let dshRoot = isDev ? (process.env.DSHD_DEV_ROOT ?? resourcesDir) : join(resourcesDir, 'dsh-dist');
-// Set when seeding failed — the install-dir closure is in use and upgrade
-// prompts must be suppressed (nothing to swap onto).
-let engineSeedFailed = false;
 
 /**
- * Seed the engine closure from the install dir on first run (or after an
- * uninstall-reinstall). Idempotent; NEVER blocks startup — any failure
- * falls back to the install-dir closure (previous behavior) and the engine
- * update channel is suppressed.
+ * Resolve where dsh runs from. There is NO seed copy at install time: the
+ * bundled install-dir closure (DSHD_RESOURCES_DIR) is used as-is until the
+ * user's first engine update swaps a fresh closure into ~/.dsh/engine
+ * (engine-updater.ts). Idempotent; NEVER blocks startup.
  */
 function ensureEngine(): void {
   if (isDev) return;
-  const binJs = join(engineDist, 'apps', 'cli', 'lib', 'bin.js');
-  if (existsSync(binJs)) {
-    // Leftovers from a previous install — clean opportunistically.
+  if (existsSync(join(engineDist, 'apps', 'cli', 'lib', 'bin.js'))) {
+    // User-updated engine — leftovers from an interrupted swap get cleaned
+    // opportunistically.
     try {
       rmSync(join(dshHome, 'engine.prev'), { recursive: true, force: true });
       rmSync(join(dshHome, 'engine.staging'), { recursive: true, force: true });
@@ -61,54 +58,23 @@ function ensureEngine(): void {
       /* ok */
     }
     dshRoot = engineDist;
+    console.log(`[sidecar] engine: user-updated closure at ${engineDir}`);
     return;
   }
-  const seedBin = join(resourcesDir, 'dsh-dist', 'apps', 'cli', 'lib', 'bin.js');
-  if (!existsSync(seedBin)) {
-    console.log('[sidecar] no seed engine in resources either — using install dir as-is');
-    return;
-  }
-  try {
-    console.log(`[sidecar] seeding engine from ${resourcesDir} → ${engineDir}`);
-    mkdirSync(engineDir, { recursive: true });
-    // The built closure = dsh-dist + node_modules. Every top-level copy logs
-    // a line so slow seeding (HDD, AV scanning) is diagnosable.
-    for (const name of ['dsh-dist', 'node_modules']) {
-      const src = join(resourcesDir, name);
-      if (!existsSync(src)) {
-        console.log(`[sidecar] seed: ${name} not in resources — skipped`);
-        continue;
-      }
-      console.log(`[sidecar] seed: copying ${name} …`);
-      cpSync(src, join(engineDir, name), { recursive: true });
-      console.log(`[sidecar] seed: ${name} done`);
-    }
-    if (!existsSync(binJs)) {
-      throw new Error('seeded engine missing CLI entry');
-    }
-    console.log(`[sidecar] engine seeded at ${engineDir}`);
-    dshRoot = engineDist;
-  } catch (e) {
-    engineSeedFailed = true;
-    console.error(`[sidecar] engine seed failed — falling back to install dir: ${e}`);
-    try {
-      rmSync(engineDir, { recursive: true, force: true });
-    } catch {
-      /* ok */
-    }
-    // dshRoot stays at the install-dir closure (fallback).
-  }
+  dshRoot = join(resourcesDir, 'dsh-dist');
+  console.log('[sidecar] engine: bundled install-dir closure (no user update yet)');
 }
 
 // 1. Data dir (idempotent; prod shell also pre-creates it).
 ensureDataDirs();
 
-// 2. Engine bootstrap (seed copy), then spawn dsh web.
+// 2. Engine root resolution (bundled closure vs user-updated), then spawn.
 ensureEngine();
 // A staged update (user picked "Later" last run) is applied here, before dsh
-// spawns — nothing is running, so the swap cannot interrupt any task.
-if (!isDev) {
-  applyPendingEngineStaging(engineDir);
+// spawns — nothing is running, so the swap cannot interrupt any task. When
+// applied, dsh switches from the bundled closure to the staged one.
+if (!isDev && applyPendingEngineStaging(engineDir)) {
+  dshRoot = engineDist;
 }
 
 let dshChild: ChildProcess | null = null;
@@ -196,12 +162,14 @@ const controlServer = createControlServer({
 const ENGINE_STARTUP_CHECK_ENABLED = false;
 initEngineUpdater({
   engineDir,
+  bundledRoot: join(resourcesDir, 'dsh-dist'),
   killDsh: () => stopDshChild('engine-swap'),
-  respawn: () => {
+  respawn: (root) => {
+    dshRoot = root;
     respawnDsh();
   },
 });
-if (ENGINE_STARTUP_CHECK_ENABLED && !isDev && !engineSeedFailed) {
+if (ENGINE_STARTUP_CHECK_ENABLED && !isDev) {
   setTimeout(() => {
     getEngineUpdater()
       .checkForUpdate({ popup: true })
