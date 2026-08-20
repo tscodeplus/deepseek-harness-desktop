@@ -49,7 +49,15 @@ const BUNDLE_MANIFEST_FILE = path.join(STAGING, 'bundle-manifest.json');
 // (e.g. marked for release-notes rendering) used to keep the stale staging
 // and ship a bundle whose sidecar crashed at import time with
 // "Cannot find package '<new-dep>'".
-const BUNDLE_DEPS_VERSION = 10;
+// v11: prune @openai/codex (main + per-platform ~354 MB vendor binaries — the
+// v0.4.0 installer grew 50 MB → 135 MB because of it) and inject a tiny
+// PATH-forwarding stub under the same name so the dsh-subagent-codex driver's
+// package-local resolution keeps working with the user's own `npm i -g
+// @openai/codex`. Same-name version conflicts (main pkg vs its
+// -win32-x64 platform variant) now prefer the plain-semver package instead of
+// letting the variant overwrite it (which stripped bin.codex and crashed the
+// driver at import).
+const BUNDLE_DEPS_VERSION = 11;
 // Mirrors every log line to .sidecar-deps/bundle.log so build.ps1 (which
 // buffers cmd output until the command exits) can be tailed for progress.
 const LOG_FILE = path.join(STAGING, 'bundle.log');
@@ -204,6 +212,14 @@ const SKIP_PACKAGES = new Set([
   '@anthropic-ai/claude-agent-sdk-linux-arm64',
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl',
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl',
+  // @openai/codex — main package + per-platform variants. Each platform
+  // package ships a ~354 MB vendor/ (codex.exe + code-mode host) — the
+  // single largest item in the bundle (v0.4.0 grew 50 MB → 135 MB). Pruned
+  // entirely; the desktop bundle injects a PATH-forwarding stub under
+  // node_modules/@openai/codex (see writeCodexStub) so the driver's
+  // package-local resolution keeps working with the user's own install
+  // (`npm i -g @openai/codex`), same contract as upstream.
+  '@openai/codex',
 ]);
 
 /** Dev-only packages that must never land in the production bundle. */
@@ -581,10 +597,23 @@ function copyPnpmPkg(pkgPath, destBase, isNativeOverride = false) {
   if (fs.existsSync(existingPkgJsonPath) && !isNativeOverride) {
     try {
       const existing = JSON.parse(fs.readFileSync(existingPkgJsonPath, 'utf8'));
-      // Keep the newer version
+      // Keep the newer version — but prefer the plain-semver package over a
+      // same-name platform variant (npm's "<name>@<ver>-<os>-<arch>" scheme,
+      // e.g. @openai/codex@0.147.0 vs @openai/codex@0.147.0-win32-x64): the
+      // variant must NOT overwrite the main package, or package.json loses
+      // its bin field and the driver crashes at import time.
       if (existing.version && pkgJson.version) {
-        const cmp = existing.version.localeCompare(pkgJson.version, undefined, { numeric: true });
-        if (cmp >= 0) return; // existing is same or newer, skip
+        const isVariant = (v) => /-(win32|darwin|linux)-(x64|arm64|ia32|arm)(\b|-)/i.test(v);
+        const existingIsVariant = isVariant(existing.version);
+        const incomingIsVariant = isVariant(pkgJson.version);
+        if (existingIsVariant && !incomingIsVariant) {
+          /* incoming is the main package — overwrite the variant below */
+        } else if (!existingIsVariant && incomingIsVariant) {
+          return; // existing is the main package — skip the variant
+        } else {
+          const cmp = existing.version.localeCompare(pkgJson.version, undefined, { numeric: true });
+          if (cmp >= 0) return; // existing is same or newer, skip
+        }
       }
     } catch { /* ignore, overwrite */ }
   }
@@ -708,6 +737,69 @@ function buildRuntimeDist() {
   }
   copyRuntimeDist(DSH_DIST_SRC, DSH_RUNTIME_DIST);
   log(`✅ Runtime closure ready: ${DSH_RUNTIME_DIST}`);
+}
+
+/**
+ * Inject the codex PATH-forwarding stub under node_modules/@openai/codex.
+ * The bundle prunes @openai/codex (per-platform vendor binaries, ~354 MB);
+ * the dsh-subagent-codex driver resolves '@openai/codex/package.json' at
+ * module top level and spawns `node <bin.codex> app-server --stdio` — this
+ * stub satisfies that resolution and forwards argv to the user's own `codex`
+ * on PATH (`npm i -g @openai/codex`), the same contract upstream expects.
+ * Version 0.0.0 keeps fixNestedDeps' major-version check from trying to nest
+ * a real codex package under dependents.
+ */
+function writeCodexStub() {
+  const dir = path.join(STAGING_NM, '@openai', 'codex');
+  fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify(
+      {
+        name: '@openai/codex',
+        version: '0.0.0-desktop-stub',
+        description:
+          'Desktop stub: forwards to codex on PATH (platform binaries pruned from the bundle)',
+        private: true,
+        bin: { codex: 'bin/codex.js' },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'bin', 'codex.js'),
+    `#!/usr/bin/env node
+// Desktop codex stub — forwards argv to the user-installed \`codex\` on PATH.
+// @openai/codex (per-platform vendor binaries, ~354 MB) is pruned from the
+// bundle; the dsh-subagent-codex driver resolves this package and spawns
+// \`node bin/codex.js app-server --stdio\` — this shim hands the call to the
+// host's codex instead (install with: npm install -g @openai/codex).
+'use strict';
+const { spawn } = require('node:child_process');
+const argv = process.argv.slice(2);
+const isWin = process.platform === 'win32';
+const child = spawn(isWin ? 'codex.cmd' : 'codex', argv, {
+  stdio: 'inherit',
+  shell: isWin, // codex.cmd must run under cmd.exe on Windows
+});
+child.on('error', (err) => {
+  if (err.code === 'ENOENT') {
+    console.error(
+      '[dsh-desktop] codex not found on PATH — install it with: npm install -g @openai/codex',
+    );
+    process.exit(127);
+  }
+  console.error('[dsh-desktop] codex launch failed:', err.message);
+  process.exit(1);
+});
+child.on('exit', (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  else process.exit(code ?? 1);
+});
+`,
+  );
+  log(`  ✚ @openai/codex stub (PATH-forwarding — codex binaries pruned)`);
 }
 
 /**
@@ -931,6 +1023,11 @@ function main() {
   for (const [pkgPath, { name }] of allDeps) {
     copyPnpmPkg(pkgPath, STAGING_NM);
   }
+
+  // 4b. Inject the codex PATH-forwarding stub (codex itself was pruned in
+  // step 4). Written before fixNestedDeps so its version comparison sees the
+  // stub and never tries to nest a real codex package.
+  writeCodexStub();
 
   // 5. Verify native addons are present (Node ABI — pnpm prebuilds on the
   // build machine, matching the bundled Node runtime major version).
