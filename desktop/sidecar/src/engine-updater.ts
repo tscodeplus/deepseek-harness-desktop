@@ -482,6 +482,22 @@ class EngineUpdater {
     this.downloadCancelled = true;
   }
 
+  /** One-step "Download & Install": download the update, then swap + restart
+   *  immediately — no separate user-confirmed restart step in between (the
+   *  About page offers a single combined action). Cancel still aborts the
+   *  download phase; once the install begins it is not cancellable. */
+  async downloadAndInstall(): Promise<void> {
+    await this.downloadUpdate();
+    if (this.state === 'error' || this.downloadState.state !== 'done') {
+      // Download failed or cancelled — the UI already reflects that state.
+      return;
+    }
+    await this.installUpdate();
+    if (this.installState.state === 'ready') {
+      await this.restartUpdate();
+    }
+  }
+
   /** Extract the downloaded tarball into engine.staging and verify the
    *  closure — WITHOUT touching the live engine. The user then confirms the
    *  restart (they may be running tasks; an auto-restart would hard-stop

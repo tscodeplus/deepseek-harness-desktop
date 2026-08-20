@@ -239,7 +239,7 @@
     // Action buttons are created dynamically — delegate on the container.
     engVal.addEventListener('click', function (e) {
       var id = (e.target && e.target.id) || '';
-      if (id === 'eng-download') postEngine('download');
+      if (id === 'eng-download-install') postEngine('download-install');
       else if (id === 'eng-install') postEngine('install');
       else if (id === 'eng-restart') postEngine('restart');
       else if (id === 'eng-later') engHide();
@@ -296,7 +296,7 @@
         var av = s.available || {};
         lines.push(engEsc((L.engineAvailable || 'Update available') + ' ' +
                           (av.version || '') + ' (' + fmtMB(av.size || 0) + ')') +
-                   engLink(L.engineDownload || 'Download', 'eng-download', 'primary'));
+                   engLink(L.engineDownload || 'Download & Install', 'eng-download-install', 'primary'));
       } else if (s.state === 'installing' || ins.state === 'installing') {
         // restartUpdate sets ins.message ("Restarting…") — show it over the
         // generic label; it carries no progress, so the bar below is

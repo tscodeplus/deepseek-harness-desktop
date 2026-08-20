@@ -478,6 +478,13 @@ async function handleEngine(
       json(res, 200, { ok: true });
       return;
     }
+    if (action === 'download-install' && method === 'POST') {
+      // Combined About-page action: download, then swap + restart right away
+      // (no intermediate user-confirmed restart step).
+      void updater.getEngineUpdater().downloadAndInstall();
+      json(res, 200, { ok: true });
+      return;
+    }
     if (action === 'restart' && method === 'POST') {
       // User-confirmed restart applying a staged update — swaps the engine
       // closure, respawns dsh and health-checks it (with rollback).
