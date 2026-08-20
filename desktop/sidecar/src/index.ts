@@ -13,7 +13,7 @@
 // Then serve the control API + heartbeat until shutdown, killing dsh on exit.
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,7 +27,6 @@ import {
   getEngineUpdater,
   initEngineUpdater,
 } from './engine-updater.js';
-import { compareVersions } from './updater.js';
 
 const isDev = process.env.DSHD_DEV === '1';
 const resourcesDir = process.env.DSHD_RESOURCES_DIR ?? process.cwd();
@@ -81,59 +80,61 @@ if (!isDev && applyPendingEngineStaging(engineDir)) {
 let dshChild: ChildProcess | null = null;
 
 /**
- * Whether the engine closure at the given dsh-dist root accepts `--no-open`
- * (rc8+; the automatic default-browser handoff is also new there). Older
- * engines reject the unknown option and exit. The bundled seed closure can
- * lag the user-updated engine, so decide per closure from its own CLI
- * package.json — the .engine-ref.json annotation records the fetch target,
- * not the closure's actual code version.
+ * Shared exit bookkeeping for a spawned dsh child. With `--no-open` there is
+ * one extra duty: pre-rc8 closures reject the unknown option and exit 1
+ * immediately, so respawn without the flag to keep the old engine running.
+ * Guarded by dshChild identity so a later respawn can't double-retry.
  */
-function engineSupportsNoOpenFlag(root: string): boolean {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(join(root, 'apps', 'cli', 'package.json'), 'utf8'),
-    ) as { version?: string };
-    return typeof pkg.version === 'string' && compareVersions(pkg.version, '0.1.0-rc.8') >= 0;
-  } catch {
-    return false; // unknown closure — stay compatible, pass no flag
-  }
-}
-
-function spawnDsh(): ChildProcess {
-  console.log(`[sidecar] starting dsh web (dev=${isDev}, root=${dshRoot})`);
-  let child: ChildProcess;
-  if (isDev) {
-    // Dev: run exactly like upstream `pnpm dsh web` (tsx loader, src entry).
-    child = spawn('pnpm', ['dsh', 'web'], {
-      cwd: dshRoot,
-      shell: process.platform === 'win32',
-      env: dshEnv(),
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
-  } else {
-    // Prod: the built CLI bundle (tsdown output) runs on the bundled Node.
-    // --no-open: since rc8, `dsh web` opens the default browser once the
-    // server is ready (upstream CLI behavior) — the desktop shell IS the
-    // browser here, so that handoff must be suppressed. Only pass it when
-    // the closure understands it (rc8+); older closures exit on the
-    // unknown option.
-    const entry = join(dshRoot, 'apps', 'cli', 'lib', 'bin.js');
-    const webArgs = ['web'];
-    if (engineSupportsNoOpenFlag(dshRoot)) webArgs.push('--no-open');
-    child = spawn(process.execPath, [entry, ...webArgs], {
-      cwd: dshRoot,
-      env: dshEnv(),
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
-  }
+function watchDsh(child: ChildProcess, noOpen: boolean): ChildProcess {
   child.on('error', (err) => {
     console.error('[sidecar] dsh spawn error:', err);
   });
   child.on('exit', (code, signal) => {
     console.log(`[sidecar] dsh exited (code=${code}, signal=${signal})`);
+    // Only a clean unknown-option exit (code 1, no signal) triggers the
+    // fallback — signal deaths (e.g. engine-swap SIGTERM) must not respawn.
+    if (noOpen && code === 1 && signal === null && dshChild === child) {
+      console.log('[sidecar] dsh rejected --no-open (pre-rc8 closure?) — retrying without it');
+      dshChild = watchDsh(spawnDshWeb(['web']), false);
+      return;
+    }
     dshChild = null;
   });
   return child;
+}
+
+/** Spawn the prod CLI bundle (`apps/cli/lib/bin.js`) with the given args. */
+function spawnDshWeb(webArgs: string[]): ChildProcess {
+  const entry = join(dshRoot, 'apps', 'cli', 'lib', 'bin.js');
+  return spawn(process.execPath, [entry, ...webArgs], {
+    cwd: dshRoot,
+    env: dshEnv(),
+    stdio: ['ignore', 'inherit', 'inherit'],
+  });
+}
+
+function spawnDsh(): ChildProcess {
+  console.log(`[sidecar] starting dsh web (dev=${isDev}, root=${dshRoot})`);
+  if (isDev) {
+    // Dev: run exactly like upstream `pnpm dsh web` (tsx loader, src entry).
+    return watchDsh(
+      spawn('pnpm', ['dsh', 'web'], {
+        cwd: dshRoot,
+        shell: process.platform === 'win32',
+        env: dshEnv(),
+        stdio: ['ignore', 'inherit', 'inherit'],
+      }),
+      false,
+    );
+  }
+  // Prod: the built CLI bundle (tsdown output) runs on the bundled Node.
+  // Since rc8, `dsh web` opens the default browser once the server is ready
+  // (upstream CLI behavior) — the desktop shell IS the browser, so the
+  // handoff must ALWAYS be suppressed, no matter what the closure looks
+  // like (a per-closure version probe can misread a mid-install or stale
+  // closure and let the browser pop on the first launch). Pre-rc8 closures
+  // reject the unknown option and exit 1; watchDsh respawns without it.
+  return watchDsh(spawnDshWeb(['web', '--no-open']), true);
 }
 
 /** (Re)spawn dsh — used at boot and by engine-updater.ts after a swap. */
