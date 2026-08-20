@@ -43,9 +43,9 @@ const CLI_ENTRY = path.join(DSH_DIR, 'apps', 'cli', 'lib', 'bin.js');
 // arch), so the fast path below also verifies the platform.
 const TARGET_PLATFORM = process.env.DSHD_TARGET_PLATFORM || 'win32-x64';
 
-function sh(cmd, cwd) {
+function sh(cmd, cwd, env) {
   console.log(`  $ ${cmd}`);
-  execSync(cmd, { cwd, stdio: 'inherit' });
+  execSync(cmd, { cwd, stdio: 'inherit', env: env ?? process.env });
 }
 
 /**
@@ -199,7 +199,19 @@ function main() {
     console.log('[fetch-dsh] installing dependencies (upstream lockfile) ...');
     sh(`${pnpm} install --frozen-lockfile`, DSH_DIR);
     console.log('[fetch-dsh] building dsh (lib + web frontend) ...');
-    sh(`${pnpm} run build`, DSH_DIR);
+    // Official client profile: without it the web UI falls back to the
+    // upstream "DSH Local Build" brand (the sidebar brand plugin
+    // ui-brand-official gates on DSH_CLIENT_BUILD_PROFILE=official). The
+    // commit hash is the closure's checkout HEAD — the pinned ref itself.
+    const buildEnv = {
+      ...process.env,
+      DSH_BUILD_CLIENT_PROFILE: 'official',
+      DSH_CLIENT_COMMIT_HASH: execSync('git rev-parse HEAD', {
+        cwd: DSH_DIR,
+        encoding: 'utf8',
+      }).trim(),
+    };
+    sh(`${pnpm} run build`, DSH_DIR, buildEnv);
   } else {
     console.log('[fetch-dsh] --no-build: skipping pnpm install + build (source-only closure)');
   }
