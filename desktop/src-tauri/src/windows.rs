@@ -575,7 +575,7 @@ pub fn show_about_window(app: &AppHandle) -> tauri::Result<()> {
         "engineChecking": tr("正在检查 DeepSeek Harness 更新…", "Checking for DeepSeek Harness updates…", zh),
         "engineUpToDate": tr("DeepSeek Harness 已是最新", "DeepSeek Harness is up to date", zh),
         "engineAvailable": tr("发现 DeepSeek Harness 新版本", "DeepSeek Harness update available", zh),
-        "engineDownload": tr("下载", "Download", zh),
+        "engineDownload": tr("下载并安装", "Download & Install", zh),
         "engineDownloading": tr("正在下载 DeepSeek Harness…", "Downloading DeepSeek Harness…", zh),
         "engineDownloaded": tr("DeepSeek Harness 已下载，可以安装", "DeepSeek Harness downloaded, ready to install", zh),
         "engineInstalling": tr("正在安装 DeepSeek Harness…", "Installing DeepSeek Harness…", zh),

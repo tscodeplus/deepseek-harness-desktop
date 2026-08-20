@@ -173,7 +173,7 @@ function fallbackLocales(): DesktopLocales {
       engineCancel: 'Cancel',
       engineClose: 'Close',
       engineInstallNow: 'Update now',
-      engineDownload: 'Download & Install',
+      engineDownload: 'Download',
       engineInstallReady: 'Update ready — restart DeepSeek Harness to apply',
       engineRestartNow: 'Restart Now',
       engineLater: 'Later',
