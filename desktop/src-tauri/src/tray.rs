@@ -67,6 +67,16 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
 
     let status = MenuItem::with_id(app, ID_STATUS, status_label(app, cfg), false, None::<&str>)?;
     menu.append(&status)?;
+
+    let restart = MenuItem::with_id(
+        app,
+        ID_RESTART_SERVICE,
+        tr("重启服务", "Restart Service", zh),
+        true,
+        None::<&str>,
+    )?;
+    menu.append(&restart)?;
+
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     let toggle = MenuItem::with_id(
@@ -78,23 +88,24 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
     )?;
     menu.append(&toggle)?;
 
-    let restart = MenuItem::with_id(
+    let auto_start = CheckMenuItem::with_id(
         app,
-        ID_RESTART_SERVICE,
-        tr("重启服务", "Restart Service", zh),
+        ID_AUTO_START,
+        tr("开机自启动", "Start on Login", zh),
         true,
+        cfg.auto_start,
         None::<&str>,
     )?;
-    menu.append(&restart)?;
-
-    let restart_app = MenuItem::with_id(
+    menu.append(&auto_start)?;
+    let close_to_tray = CheckMenuItem::with_id(
         app,
-        ID_RESTART_APP,
-        tr("重启应用", "Restart App", zh),
+        ID_CLOSE_TO_TRAY,
+        tr("关闭时最小化到托盘", "Close to Tray", zh),
         true,
+        cfg.close_to_tray,
         None::<&str>,
     )?;
-    menu.append(&restart_app)?;
+    menu.append(&close_to_tray)?;
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
@@ -118,31 +129,22 @@ fn build_menu(app: &AppHandle, cfg: &DesktopConfig) -> tauri::Result<Menu<tauri:
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
-    let auto_start = CheckMenuItem::with_id(
+    let restart_app = MenuItem::with_id(
         app,
-        ID_AUTO_START,
-        tr("开机自启动", "Start on Login", zh),
+        ID_RESTART_APP,
+        tr("重启应用", "Restart App", zh),
         true,
-        cfg.auto_start,
         None::<&str>,
     )?;
-    menu.append(&auto_start)?;
-    let close_to_tray = CheckMenuItem::with_id(
-        app,
-        ID_CLOSE_TO_TRAY,
-        tr("关闭时最小化到托盘", "Close to Tray", zh),
-        true,
-        cfg.close_to_tray,
-        None::<&str>,
-    )?;
-    menu.append(&close_to_tray)?;
+    menu.append(&restart_app)?;
+
+    let quit = MenuItem::with_id(app, ID_QUIT, tr("退出", "Quit", zh), true, None::<&str>)?;
+    menu.append(&quit)?;
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     let about = MenuItem::with_id(app, ID_ABOUT, tr("关于", "About", zh), true, None::<&str>)?;
     menu.append(&about)?;
-    let quit = MenuItem::with_id(app, ID_QUIT, tr("退出", "Quit", zh), true, None::<&str>)?;
-    menu.append(&quit)?;
 
     Ok(menu)
 }
